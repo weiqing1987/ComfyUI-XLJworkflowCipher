@@ -7,9 +7,11 @@ const GROUP_NODE_PREFIX = "workflow/";
 const HIDDEN_WIDGET_TYPE = "converted-widget:workflowcipher";
 const BRAND_NAME = "XLJworkflowCipher";
 const VAULT_TITLE = "ComfyUI-XLJworkflowCipher";
+const ACCESS_KEY_WIDGET = "access_key";
 const ENCRYPT_SINGLE_LABEL = `${BRAND_NAME} \u52a0\u5bc6\u6b64\u8282\u70b9`;
 const ENCRYPT_MULTI_LABEL = `${BRAND_NAME} \u52a0\u5bc6\u6240\u9009\u8282\u70b9`;
 const RESTORE_LABEL = `${BRAND_NAME} \u8f93\u5165\u5bc6\u7801\u5e76\u8fd8\u539f`;
+const PORTAL_LABEL = `${BRAND_NAME} \u5bc6\u94a5\u7ba1\u7406\u9875`;
 
 function getSelectedNodes(canvas) {
   const selected = canvas?.selected_nodes;
@@ -50,8 +52,12 @@ function isWorkflowCipherControlNode(node) {
   return isVaultNode(node) || isLockedGroupNode(node);
 }
 
+function getWidget(node, name) {
+  return node?.widgets?.find((widget) => widget?.name === name) || null;
+}
+
 function getPasswordWidget(node) {
-  return node?.widgets?.find((widget) => widget?.name === "password") || null;
+  return getWidget(node, "password");
 }
 
 function getGroupHandler(node) {
@@ -74,6 +80,18 @@ function hideWidget(widget) {
   widget.type = HIDDEN_WIDGET_TYPE;
   for (const linkedWidget of widget.linkedWidgets || []) {
     hideWidget(linkedWidget);
+  }
+}
+
+function showWidget(widget) {
+  if (!widget) {
+    return;
+  }
+  if (widget.origComputeSize) {
+    widget.computeSize = widget.origComputeSize;
+  }
+  if (widget.origType) {
+    widget.type = widget.origType;
   }
 }
 
@@ -120,6 +138,132 @@ function trimVaultPorts(node) {
   }
 }
 
+function getVisibleWidgetNames(node) {
+  const names = new Set(["password"]);
+  if (node?.properties?.workflowcipher_key_required) {
+    names.add(ACCESS_KEY_WIDGET);
+  }
+  return names;
+}
+
+async function requestJson(url, options = {}) {
+  const response = await api.fetchApi(url, options);
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    throw new Error(data.error || `${BRAND_NAME} request failed: ${response.status}`);
+  }
+  return data;
+}
+
+function openPortalPage() {
+  window.open("/xljworkflowcipher/portal", "_blank", "noopener,noreferrer");
+}
+
+function promptEncryptionOptions() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "background:rgba(5,9,18,0.72)",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "z-index:99999",
+      "padding:20px",
+    ].join(";");
+
+    const panel = document.createElement("form");
+    panel.style.cssText = [
+      "width:min(420px,100%)",
+      "background:#131a2a",
+      "border:1px solid rgba(255,255,255,0.08)",
+      "border-radius:22px",
+      "padding:22px",
+      "color:#eef3ff",
+      "box-shadow:0 30px 80px rgba(0,0,0,0.45)",
+      "display:grid",
+      "gap:14px",
+    ].join(";");
+
+    panel.innerHTML = `
+      <div>
+        <div style="font-size:13px;color:#71d9cb;letter-spacing:0.12em;text-transform:uppercase;">${BRAND_NAME}</div>
+        <h3 style="margin:8px 0 0;font-size:24px;">加密设置</h3>
+        <p style="margin:10px 0 0;color:#9fb0d0;line-height:1.6;">
+          关闭密钥开关时保持当前行为。开启后，工作流运行必须输入对应密钥。
+        </p>
+      </div>
+      <label style="display:grid;gap:8px;">
+        <span style="color:#9fb0d0;font-size:14px;">密码</span>
+        <input name="passphrase" type="password" autocomplete="new-password" style="width:100%;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#0d1320;color:#eef3ff;" />
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,0.04);">
+        <input name="key_required" type="checkbox" style="inline-size:18px;block-size:18px;" />
+        <span>启用密钥</span>
+      </label>
+      <label data-key-row style="display:none;gap:8px;">
+        <span style="color:#9fb0d0;font-size:14px;">加密组编号 / 名称</span>
+        <input name="key_group" placeholder="例如: grok_video_pro" style="width:100%;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#0d1320;color:#eef3ff;" />
+      </label>
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button type="button" data-action="portal" style="padding:11px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#eef3ff;">密钥管理页</button>
+        <button type="button" data-action="cancel" style="padding:11px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#eef3ff;">取消</button>
+        <button type="submit" style="padding:11px 16px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#4ec7b9;color:#082420;font-weight:700;">确认加密</button>
+      </div>
+    `;
+
+    const passphraseInput = panel.querySelector('input[name="passphrase"]');
+    const keyRequiredInput = panel.querySelector('input[name="key_required"]');
+    const keyGroupInput = panel.querySelector('input[name="key_group"]');
+    const keyRow = panel.querySelector("[data-key-row]");
+
+    function cleanup(value) {
+      overlay.remove();
+      resolve(value);
+    }
+
+    function syncKeyRow() {
+      keyRow.style.display = keyRequiredInput.checked ? "grid" : "none";
+    }
+
+    keyRequiredInput.addEventListener("change", syncKeyRow);
+    panel.querySelector('[data-action="cancel"]').addEventListener("click", () => cleanup(null));
+    panel.querySelector('[data-action="portal"]').addEventListener("click", () => openPortalPage());
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        cleanup(null);
+      }
+    });
+
+    panel.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const passphrase = passphraseInput.value?.trim();
+      const keyRequired = Boolean(keyRequiredInput.checked);
+      const keyGroup = keyGroupInput.value?.trim();
+
+      if (!passphrase) {
+        window.alert("\u8bf7\u5148\u8f93\u5165\u5bc6\u7801\u3002");
+        return;
+      }
+      if (keyRequired && !keyGroup) {
+        window.alert("\u5f00\u542f\u5bc6\u94a5\u540e\uff0c\u5fc5\u987b\u586b\u5199\u52a0\u5bc6\u7ec4\u7f16\u53f7\u6216\u540d\u79f0\u3002");
+        return;
+      }
+
+      cleanup({
+        passphrase,
+        keyRequired,
+        keyGroup: keyRequired ? keyGroup : "",
+      });
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    passphraseInput.focus();
+  });
+}
+
 function applyCipherAppearance(node) {
   if (!node || node.__workflowCipherAppearanceApplied) {
     return;
@@ -130,11 +274,12 @@ function applyCipherAppearance(node) {
     trimVaultPorts(node);
   }
 
-  if (isLockedGroupNode(node)) {
-    for (const widget of node.widgets || []) {
-      if (widget.name !== "password") {
-        hideWidget(widget);
-      }
+  const visibleWidgetNames = getVisibleWidgetNames(node);
+  for (const widget of node.widgets || []) {
+    if (visibleWidgetNames.has(widget.name)) {
+      showWidget(widget);
+    } else {
+      hideWidget(widget);
     }
   }
 
@@ -151,7 +296,7 @@ function applyCipherAppearance(node) {
   node.bgcolor = "#16213e";
 
   const nodeWidth = 320;
-  const nodeHeight = 160;
+  const nodeHeight = node?.properties?.workflowcipher_key_required ? 198 : 160;
 
   node.serialize_widgets = true;
   node.computeSize = () => [nodeWidth, nodeHeight];
@@ -239,25 +384,22 @@ async function verifyPassphrase(node, passphrase) {
   return (await hashPassphrase(passphrase)) === expectedHash;
 }
 
-async function encryptSelectionToVault(selectedNodes, passphrase) {
+async function encryptSelectionToVault(selectedNodes, options) {
   const promptData = structuredClone(await app.graphToPrompt());
   const workflowData = getWorkflowSnapshot() || promptData.workflow;
-  const response = await api.fetchApi("/xljworkflowcipher/encrypt_selection", {
+  const data = await requestJson("/xljworkflowcipher/encrypt_selection", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       workflow: workflowData,
       prompt: promptData.output,
       selected_node_ids: selectedNodes.map((node) => node.id),
-      passphrase,
+      passphrase: options.passphrase,
       node_title: buildNodeTitle(selectedNodes),
+      key_required: options.keyRequired,
+      key_group: options.keyGroup,
     }),
   });
-
-  const data = await response.json();
-  if (!response.ok || data.error) {
-    throw new Error(data.error || `${BRAND_NAME} request failed: ${response.status}`);
-  }
 
   app.graph?.clear?.();
   await app.loadGraphData(data.workflow);
@@ -273,12 +415,12 @@ async function encryptSelectionToVault(selectedNodes, passphrase) {
 }
 
 async function restoreVaultNode(node, passphrase) {
-  if (!node || !passphrase) {
+  if (!node) {
     return;
   }
 
   const workflowData = getWorkflowSnapshot() || structuredClone((await app.graphToPrompt()).workflow);
-  const response = await api.fetchApi("/xljworkflowcipher/decrypt_selection", {
+  const data = await requestJson("/xljworkflowcipher/decrypt_selection", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -287,11 +429,6 @@ async function restoreVaultNode(node, passphrase) {
       passphrase,
     }),
   });
-
-  const data = await response.json();
-  if (!response.ok || data.error) {
-    throw new Error(data.error || `${BRAND_NAME} request failed: ${response.status}`);
-  }
 
   app.graph?.clear?.();
   await app.loadGraphData(data.workflow);
@@ -336,12 +473,12 @@ async function encryptSelection(nodes) {
     return;
   }
 
-  const passphrase = window.prompt(`\u8bf7\u8f93\u5165 ${BRAND_NAME} \u5bc6\u7801`);
-  if (!passphrase) {
+  const options = await promptEncryptionOptions();
+  if (!options) {
     return;
   }
 
-  await encryptSelectionToVault(selectedNodes, passphrase);
+  await encryptSelectionToVault(selectedNodes, options);
 }
 
 async function handlePasswordCommit(node, passphrase) {
@@ -407,6 +544,31 @@ function installPasswordHandler(node) {
   };
 }
 
+async function maybeRestoreDestroyedVault(node) {
+  if (!isVaultNode(node) || !node?.properties?.workflowcipher_key_required) {
+    return;
+  }
+  if (node.__workflowCipherDestroyCheckStarted) {
+    return;
+  }
+  const keyGroup = (node?.properties?.workflowcipher_key_group || "").trim();
+  if (!keyGroup) {
+    return;
+  }
+
+  node.__workflowCipherDestroyCheckStarted = true;
+  try {
+    const status = await requestJson(`/xljworkflowcipher/api/key-groups/status?code=${encodeURIComponent(keyGroup)}`);
+    if (status?.destroyed) {
+      await restoreVaultNode(node, "");
+    }
+  } catch (_error) {
+    // Keep the node usable even if the management service is unavailable.
+  } finally {
+    node.__workflowCipherDestroyCheckStarted = false;
+  }
+}
+
 function addEncryptMenu(node, options) {
   if (isWorkflowCipherControlNode(node)) {
     return;
@@ -461,6 +623,10 @@ function injectCanvasContextMenu() {
           }),
       });
     }
+    options.push({
+      content: PORTAL_LABEL,
+      callback: () => openPortalPage(),
+    });
     return options;
   };
 }
@@ -488,6 +654,7 @@ function patchVaultNodeType(nodeType) {
     requestAnimationFrame(() => {
       applyCipherAppearance(this);
       installPasswordHandler(this);
+      maybeRestoreDestroyedVault(this);
     });
     return result;
   };
@@ -518,6 +685,7 @@ app.registerExtension({
     }
     applyCipherAppearance(node);
     installPasswordHandler(node);
+    maybeRestoreDestroyedVault(node);
   },
   setup() {
     injectCanvasContextMenu();
