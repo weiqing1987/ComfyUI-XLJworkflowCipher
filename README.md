@@ -36,6 +36,7 @@ Encrypts a selected group of nodes directly in the current workflow using right-
 **Inputs:** up to 16 public inputs routed into the hidden subgraph
 **Outputs:** up to 16 outputs from the hidden subgraph back to the public graph
 **password:** leave blank to run normally; enter the original passphrase to visually restore the hidden nodes
+**access_key:** shown only when key mode is enabled; a valid key is required before the workflow can run
 
 ### XLJworkflowCipher Encrypt + Bridge + Decrypt (flow-based)
 
@@ -75,6 +76,8 @@ A three-node flow for more explicit control.
 ## Notes
 
 - The encrypted payload is embedded in the node's `properties` field inside the workflow JSON. The runtime passphrase is also stored there as `workflowcipher_runtime_key`, which is what enables passwordless execution.
+- Selection encryption now supports an optional key mode. When enabled, the vault stores a workflow key-group code and requires a valid `access_key` at runtime.
+- The management portal is served from `http://127.0.0.1:8188/xljworkflowcipher/portal` inside the running ComfyUI server.
 - Exactly one Encrypt node and one Bridge node are supported per flow-based workflow.
 - The vault node supports up to 16 public inputs and 16 public outputs.
 - Hidden nodes are completely absent from the exported workflow JSON — only the encrypted binary payload is present.

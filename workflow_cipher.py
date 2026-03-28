@@ -10,6 +10,7 @@ import folder_paths
 from comfy_execution.graph_utils import ExecutionBlocker, GraphBuilder, is_link
 
 from .crypto_utils import decrypt_payload, encrypt_payload, sanitize_filename
+from .key_store import get_workflow_group_status, validate_access_key
 
 
 MAX_SHELL_PORTS = 16
@@ -109,7 +110,16 @@ def _build_shell_node_output_map(link_records):
 
 
 class WorkflowCipherSelectionBuilder:
-    def __init__(self, workflow, prompt, template_id, selected_node_ids, node_title=None):
+    def __init__(
+        self,
+        workflow,
+        prompt,
+        template_id,
+        selected_node_ids,
+        node_title=None,
+        key_required=False,
+        key_group="",
+    ):
         if not isinstance(workflow, dict) or not isinstance(prompt, dict):
             raise ValueError("WorkflowCipher selection encryption requires workflow and prompt data.")
 
@@ -117,6 +127,10 @@ class WorkflowCipherSelectionBuilder:
         self.prompt = {str(key): value for key, value in copy.deepcopy(prompt).items()}
         self.template_id = template_id
         self.node_title = (node_title or "").strip()
+        self.key_required = bool(key_required)
+        self.key_group = (key_group or "").strip()
+        if self.key_required and not self.key_group:
+            raise ValueError("Key mode requires a workflow group code or name.")
         self.selected_node_ids = {int(node_id) for node_id in selected_node_ids}
         if not self.selected_node_ids:
             raise ValueError("Select at least one node to encrypt.")
@@ -321,8 +335,10 @@ class WorkflowCipherSelectionBuilder:
                 "workflowcipher_output_count": len(ordered_outputs),
                 "workflowcipher_input_labels": input_labels,
                 "workflowcipher_output_labels": output_labels,
+                "workflowcipher_key_required": self.key_required,
+                "workflowcipher_key_group": self.key_group,
             },
-            "widgets_values": [""],
+            "widgets_values": ["", ""],
         }
         shell["nodes"].append(shell_node)
 
@@ -368,7 +384,14 @@ class WorkflowCipherSelectionBuilder:
 
 
 def encrypt_selection_to_shell_workflow(
-    workflow, prompt, selected_node_ids, passphrase, template_id=None, node_title=None
+    workflow,
+    prompt,
+    selected_node_ids,
+    passphrase,
+    template_id=None,
+    node_title=None,
+    key_required=False,
+    key_group=None,
 ):
     template_id = (template_id or "").strip() or uuid.uuid4().hex
     if len(template_id) < 8:
@@ -382,6 +405,8 @@ def encrypt_selection_to_shell_workflow(
         template_id=template_id,
         selected_node_ids=selected_node_ids,
         node_title=node_title,
+        key_required=key_required,
+        key_group=key_group,
     )
     shell_workflow, shell_node_id = builder.pack_shell_workflow(passphrase)
     return {
@@ -402,7 +427,13 @@ def decrypt_selection_to_shell_workflow(workflow, shell_node_id, passphrase):
     if not packed_payload:
         raise ValueError("Encrypted WorkflowCipher payload is missing.")
 
-    payload = decrypt_payload(packed_payload, (passphrase or "").strip())
+    effective_passphrase = (passphrase or "").strip()
+    if not effective_passphrase:
+        key_group = (properties.get("workflowcipher_key_group") or "").strip()
+        group_status = get_workflow_group_status(key_group) if key_group else None
+        if group_status and group_status.get("status") == "destroyed":
+            effective_passphrase = (properties.get("workflowcipher_runtime_key") or "").strip()
+    payload = decrypt_payload(packed_payload, effective_passphrase)
     restore_nodes = copy.deepcopy(payload.get("restore_nodes") or [])
     restore_links = copy.deepcopy(payload.get("restore_links") or [])
     if not restore_nodes:
@@ -642,7 +673,7 @@ class WorkflowCipherPlanner:
         bridge_node = self.workflow_nodes[self.bridge_node_id]
 
         encrypt_node["type"] = "WorkflowCipherDecryptNode"
-        encrypt_node["widgets_values"] = [self.template_id, ""]
+        encrypt_node["widgets_values"] = [self.template_id, "", ""]
         encrypt_node["outputs"] = copy.deepcopy(bridge_node.get("outputs", []))
 
         properties = copy.deepcopy(encrypt_node.get("properties", {}))
@@ -650,6 +681,8 @@ class WorkflowCipherPlanner:
         properties["workflowcipher_pack"] = packed_payload
         properties["workflowcipher_template_id"] = self.template_id
         properties["workflowcipher_secret_nodes"] = len(self.secret_nodes)
+        properties["workflowcipher_key_required"] = False
+        properties["workflowcipher_key_group"] = ""
         encrypt_node["properties"] = properties
 
         rewritten_links = []
@@ -668,7 +701,7 @@ class WorkflowCipherPlanner:
         shell.pop("groups", None)
         self._refresh_node_link_references(shell)
 
-        safe_name = sanitize_filename(export_name, "workflow_cipher")
+        safe_name = sanitize_filename(export_name, "comfyui_xljworkflowcipher")
         file_name = f"{safe_name}_{self.template_id[:8]}.json"
         output_path = os.path.join(folder_paths.output_directory, file_name)
         with open(output_path, "w", encoding="utf-8") as handle:
@@ -838,12 +871,43 @@ class _WorkflowCipherShellBase:
         node = _find_workflow_node(workflow, unique_id)
         return (node.get("properties", {}).get("workflowcipher_runtime_key") or "").strip()
 
-    def _decrypt_impl(self, passphrase, template_id="", **kwargs):
+    def _require_access_key(self, workflow, unique_id, access_key):
+        node = _find_workflow_node(workflow, unique_id)
+        properties = node.get("properties", {})
+        key_required = bool(properties.get("workflowcipher_key_required"))
+        if not key_required:
+            return
+
+        key_group = (properties.get("workflowcipher_key_group") or "").strip()
+        if not key_group:
+            raise ValueError("This workflow requires a key group, but none is configured.")
+
+        validation = validate_access_key(key_group, (access_key or "").strip())
+        if validation.get("bypass"):
+            return
+        if validation.get("valid"):
+            return
+
+        status = validation.get("status")
+        if status == "missing_key":
+            raise ValueError("This workflow requires a valid access key before it can run.")
+        if status == "missing_group":
+            raise ValueError("The configured workflow key group does not exist.")
+        if status == "disabled":
+            raise ValueError("This workflow key group has been disabled.")
+        if status == "expired":
+            raise ValueError("This access key has expired.")
+        if status == "invalid_key":
+            raise ValueError("The access key is invalid.")
+        raise ValueError("The access key could not be validated.")
+
+    def _decrypt_impl(self, passphrase, template_id="", access_key="", **kwargs):
         unique_id = kwargs.get("unique_id")
         prompt = kwargs.get("prompt")
         extra_pnginfo = kwargs.get("extra_pnginfo")
         workflow = None if extra_pnginfo is None else extra_pnginfo.get("workflow")
 
+        self._require_access_key(workflow, unique_id, access_key)
         packed_payload = self._load_embedded_pack(workflow, unique_id)
         effective_passphrase = (passphrase or "").strip()
         if not effective_passphrase:
@@ -869,6 +933,7 @@ class WorkflowCipherDecryptNode(_WorkflowCipherShellBase):
             "required": {
                 "template_id": ("STRING", {"default": ""}),
                 "passphrase": ("STRING", {"default": "", "multiline": False}),
+                "access_key": ("STRING", {"default": "", "multiline": False}),
             },
             "optional": {name: (ANY, {}) for name in PUBLIC_INPUT_NAMES},
             "hidden": {
@@ -881,8 +946,13 @@ class WorkflowCipherDecryptNode(_WorkflowCipherShellBase):
     FUNCTION = "decrypt"
     CATEGORY = CATEGORY_NAME
 
-    def decrypt(self, template_id, passphrase, **kwargs):
-        return self._decrypt_impl(passphrase=passphrase, template_id=template_id, **kwargs)
+    def decrypt(self, template_id, passphrase, access_key, **kwargs):
+        return self._decrypt_impl(
+            passphrase=passphrase,
+            template_id=template_id,
+            access_key=access_key,
+            **kwargs,
+        )
 
 
 class WorkflowCipherVaultNode(_WorkflowCipherShellBase):
@@ -894,6 +964,7 @@ class WorkflowCipherVaultNode(_WorkflowCipherShellBase):
         return {
             "required": {
                 "password": ("STRING", {"default": "", "multiline": False}),
+                "access_key": ("STRING", {"default": "", "multiline": False}),
             },
             "optional": {name: (ANY, {}) for name in PUBLIC_INPUT_NAMES},
             "hidden": {
@@ -906,8 +977,13 @@ class WorkflowCipherVaultNode(_WorkflowCipherShellBase):
     FUNCTION = "decrypt"
     CATEGORY = CATEGORY_NAME
 
-    def decrypt(self, password, **kwargs):
-        return self._decrypt_impl(passphrase=password, template_id="", **kwargs)
+    def decrypt(self, password, access_key, **kwargs):
+        return self._decrypt_impl(
+            passphrase=password,
+            template_id="",
+            access_key=access_key,
+            **kwargs,
+        )
 
 
 class WorkflowCipherRandomSeedNode:
