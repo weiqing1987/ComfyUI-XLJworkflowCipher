@@ -13,6 +13,9 @@ const ENCRYPT_MULTI_LABEL = `${BRAND_NAME} \u52a0\u5bc6\u6240\u9009\u8282\u70b9`
 const RESTORE_LABEL = `${BRAND_NAME} \u8f93\u5165\u5bc6\u7801\u5e76\u8fd8\u539f`;
 const PORTAL_LABEL = `${BRAND_NAME} \u5bc6\u94a5\u7ba1\u7406\u9875`;
 
+// Remember key settings after decryption for auto-fill on re-encrypt
+let rememberedKeySettings = null;
+
 function getSelectedNodes(canvas) {
   const selected = canvas?.selected_nodes;
   if (!selected) {
@@ -218,6 +221,12 @@ function promptEncryptionOptions() {
     const keyGroupInput = panel.querySelector('input[name="key_group"]');
     const keyRow = panel.querySelector("[data-key-row]");
 
+    // Auto-fill remembered key settings from previous decryption
+    if (rememberedKeySettings) {
+      keyRequiredInput.checked = rememberedKeySettings.keyRequired;
+      keyGroupInput.value = rememberedKeySettings.keyGroup || "";
+    }
+
     function cleanup(value) {
       overlay.remove();
       resolve(value);
@@ -226,6 +235,9 @@ function promptEncryptionOptions() {
     function syncKeyRow() {
       keyRow.style.display = keyRequiredInput.checked ? "grid" : "none";
     }
+
+    // Sync initial state (show key_group input if remembered)
+    syncKeyRow();
 
     keyRequiredInput.addEventListener("change", syncKeyRow);
     panel.querySelector('[data-action="cancel"]').addEventListener("click", () => cleanup(null));
@@ -401,6 +413,9 @@ async function encryptSelectionToVault(selectedNodes, options) {
     }),
   });
 
+  // Clear remembered settings after successful encryption
+  rememberedKeySettings = null;
+
   app.graph?.clear?.();
   await app.loadGraphData(data.workflow);
   requestAnimationFrame(() => {
@@ -429,6 +444,14 @@ async function restoreVaultNode(node, passphrase) {
       passphrase,
     }),
   });
+
+  // Remember key settings for auto-fill on re-encrypt
+  if (data.remembered_key_group) {
+    rememberedKeySettings = {
+      keyRequired: data.remembered_key_required,
+      keyGroup: data.remembered_key_group,
+    };
+  }
 
   app.graph?.clear?.();
   await app.loadGraphData(data.workflow);

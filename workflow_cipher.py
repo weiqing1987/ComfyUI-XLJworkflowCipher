@@ -427,6 +427,10 @@ def decrypt_selection_to_shell_workflow(workflow, shell_node_id, passphrase):
     if not packed_payload:
         raise ValueError("Encrypted WorkflowCipher payload is missing.")
 
+    # Remember key info before deleting shell node
+    remembered_key_required = bool(properties.get("workflowcipher_key_required"))
+    remembered_key_group = (properties.get("workflowcipher_key_group") or "").strip()
+
     effective_passphrase = (passphrase or "").strip()
     if not effective_passphrase:
         key_group = (properties.get("workflowcipher_key_group") or "").strip()
@@ -491,6 +495,8 @@ def decrypt_selection_to_shell_workflow(workflow, shell_node_id, passphrase):
     return {
         "workflow": shell,
         "restored_node_ids": [int(node["id"]) for node in restore_nodes],
+        "remembered_key_required": remembered_key_required,
+        "remembered_key_group": remembered_key_group,
     }
 
 
