@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XLJworkflowCipher Personal Center</title>
+    <link rel="stylesheet" href="/xljworkflowcipher/portal/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">XLJworkflowCipher</p>
+          <h1>个人中心</h1>
+          <p class="summary">
+            在这里登录创作者账号、管理工作流分组、生成访问密钥，并查看当前账号下的授权状态。
+          </p>
+        </div>
+        <div class="status" id="status">正在加载...</div>
+      </section>
+
+      <section class="panel auth-panel" id="authPanel">
+        <div class="panel-head">
+          <h2>登录 / 注册</h2>
+          <p>启用密钥授权前，请先登录创作者账号。没有账号也可以直接在这里注册。</p>
+        </div>
+        <form id="authForm" class="form-grid">
+          <label>
+            <span>账号</span>
+            <input id="username" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <div class="button-row">
+            <button type="submit" data-mode="login">登录</button>
+            <button type="button" class="ghost" id="registerButton">注册并登录</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel dashboard hidden" id="dashboard">
+        <div class="panel-head split">
+          <div>
+            <h2>个人中心</h2>
+            <p id="welcomeText"></p>
+          </div>
+          <button type="button" class="ghost" id="logoutButton">退出登录</button>
+        </div>
+
+        <form id="workflowForm" class="workflow-form">
+          <label>
+            <span>工作流 ID / 代号</span>
+            <input id="workflowCode" name="code" placeholder="例如: grok_video_pro" required />
+          </label>
+          <label>
+            <span>工作流名称</span>
+            <input id="workflowName" name="name" placeholder="例如: Grok 视频 Pro" />
+          </label>
+          <button type="submit">新增工作流</button>
+        </form>
+
+        <div class="list-head">
+          <h3>工作流分组</h3>
+          <button type="button" class="ghost" id="refreshButton">刷新</button>
+        </div>
+        <div id="groupsList" class="groups-list"></div>
+      </section>
+    </main>
+
+    <template id="groupTemplate">
+      <article class="group-card">
+        <header class="group-header">
+          <div>
+            <h3 class="group-name"></h3>
+            <p class="group-code"></p>
+          </div>
+          <span class="pill group-status"></span>
+        </header>
+        <div class="group-actions">
+          <label>
+            <span>有效期</span>
+            <select class="expiry-select">
+              <option value="day">1 天</option>
+              <option value="week">1 周</option>
+              <option value="month">1 个月</option>
+              <option value="unlimited">不限</option>
+            </select>
+          </label>
+          <button type="button" class="generate-key">生成密钥</button>
+          <button type="button" class="ghost disable-group">停用</button>
+          <button type="button" class="danger destroy-group">销毁</button>
+        </div>
+        <div class="keys-wrap">
+          <div class="keys-head">
+            <span>访问密钥</span>
+            <span class="hint">销毁后无法恢复，已经分发出去的工作流也会随之失效。</span>
+          </div>
+          <div class="keys-table"></div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="/xljworkflowcipher/portal/app.js"></script>
+  </body>
+</html>
