@@ -895,6 +895,8 @@ class _WorkflowCipherShellBase:
             return
 
         status = validation.get("status")
+        if status == "remote_error":
+            raise ValueError(validation.get("error") or "Remote access key validation failed.")
         if status == "missing_key":
             raise ValueError("This workflow requires a valid access key before it can run.")
         if status == "missing_group":
