@@ -78,6 +78,7 @@ A three-node flow for more explicit control.
 - The encrypted payload is embedded in the node's `properties` field inside the workflow JSON. The runtime passphrase is also stored there as `workflowcipher_runtime_key`, which is what enables passwordless execution.
 - Selection encryption now supports an optional key mode. When enabled, the vault stores a workflow key-group code and requires a valid `access_key` at runtime.
 - The management portal is served from `http://127.0.0.1:8188/xljworkflowcipher/portal` inside the running ComfyUI server.
+- **Online Key Management Portal**: https://cf.xinlingjunai.net/ — Create key groups, generate access keys, and manage workflow licenses remotely.
 - Exactly one Encrypt node and one Bridge node are supported per flow-based workflow.
 - The vault node supports up to 16 public inputs and 16 public outputs.
 - Hidden nodes are completely absent from the exported workflow JSON — only the encrypted binary payload is present.
