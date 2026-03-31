@@ -105,17 +105,23 @@ def _remote_api_base():
     return _normalized_external_url(_plugin_config_value("XLJWORKFLOWCIPHER_API_BASE"))
 
 
+def _proxy_remote_api_base():
+    return _normalized_external_url(
+        _plugin_config_value("XLJWORKFLOWCIPHER_PROXY_API_BASE")
+    ) or _remote_api_base()
+
+
 def _remote_enabled():
     return bool(_remote_api_base())
 
 
 async def _proxy_remote_api(request, path):
-    remote_api_base = _remote_api_base()
+    remote_api_base = _proxy_remote_api_base()
     if not remote_api_base:
         return _error_response("Remote backend is not configured.", status=502)
 
     headers = {}
-    for header_name in ("Accept", "Content-Type", "Cookie"):
+    for header_name in ("Accept", "Content-Type", "Cookie", "Authorization"):
         header_value = request.headers.get(header_name)
         if header_value:
             headers[header_name] = header_value
@@ -145,6 +151,7 @@ async def _proxy_remote_api(request, path):
                     response.headers.add("Set-Cookie", cookie_value)
                 return response
     except Exception as exc:
+        print(f"[{Path(__file__).name}] remote proxy failed for {target_url}: {exc!r}")
         return _error_response(f"Remote backend request failed: {exc}", status=502)
 
 
