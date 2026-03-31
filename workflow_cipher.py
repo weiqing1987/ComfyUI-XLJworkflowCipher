@@ -10,8 +10,7 @@ import folder_paths
 from comfy_execution.graph_utils import ExecutionBlocker, GraphBuilder, is_link
 
 from .crypto_utils import decrypt_payload, encrypt_payload, sanitize_filename
-from .key_store import KeyStoreError
-from .service_client import check_access_key, fetch_workflow_group_status
+from .key_store import get_workflow_group_status, validate_access_key
 
 
 MAX_SHELL_PORTS = 16
@@ -431,12 +430,7 @@ def decrypt_selection_to_shell_workflow(workflow, shell_node_id, passphrase):
     effective_passphrase = (passphrase or "").strip()
     if not effective_passphrase:
         key_group = (properties.get("workflowcipher_key_group") or "").strip()
-        try:
-            group_status = fetch_workflow_group_status(key_group) if key_group else None
-        except KeyStoreError as exc:
-            raise ValueError(
-                f"License service is unavailable. Enter the passphrase manually or retry later. ({exc})"
-            ) from exc
+        group_status = get_workflow_group_status(key_group) if key_group else None
         if group_status and group_status.get("status") == "destroyed":
             effective_passphrase = (properties.get("workflowcipher_runtime_key") or "").strip()
     payload = decrypt_payload(packed_payload, effective_passphrase)
@@ -888,16 +882,15 @@ class _WorkflowCipherShellBase:
         if not key_group:
             raise ValueError("This workflow requires a key group, but none is configured.")
 
-        try:
-            validation = check_access_key(key_group, (access_key or "").strip())
-        except KeyStoreError as exc:
-            raise ValueError(str(exc)) from exc
+        validation = validate_access_key(key_group, (access_key or "").strip())
         if validation.get("bypass"):
             return
         if validation.get("valid"):
             return
 
         status = validation.get("status")
+        if status == "remote_error":
+            raise ValueError(validation.get("error") or "Remote access key validation failed.")
         if status == "missing_key":
             raise ValueError("This workflow requires a valid access key before it can run.")
         if status == "missing_group":

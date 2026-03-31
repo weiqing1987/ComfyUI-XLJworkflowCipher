@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import server
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from .key_store import (
     KeyStoreError,
@@ -13,26 +13,13 @@ from .key_store import (
     ensure_initialized,
     generate_workflow_key,
     get_user_by_session,
+    get_workflow_group_status,
     login_user,
     logout_user,
     register_user,
     list_workflow_groups,
     upsert_workflow_group,
-)
-from .service_client import (
-    check_access_key,
-    destroy_portal_workflow_group,
-    fetch_workflow_group_status,
-    fetch_portal_me,
-    generate_portal_workflow_key,
-    get_configured_api_base,
-    has_configured_api_base,
-    list_portal_workflows,
-    login_portal_user,
-    logout_portal_user,
-    register_portal_user,
-    upsert_portal_workflow,
-    disable_portal_workflow_group,
+    validate_access_key,
 )
 from .workflow_cipher import (
     WorkflowCipherBridgeNode,
@@ -46,14 +33,12 @@ from .workflow_cipher import (
 
 
 PORTAL_DIR = Path(__file__).resolve().parent / "portal"
+CONFIG_PATH = Path(__file__).resolve().parent / "service.env"
 ensure_initialized()
 
 
-def _error_response(message, status=400, clear_session=False):
-    response = web.json_response({"error": str(message)}, status=status)
-    if clear_session:
-        response.del_cookie(SESSION_COOKIE_NAME)
-    return response
+def _error_response(message, status=400):
+    return web.json_response({"error": str(message)}, status=status)
 
 
 def _session_token(request):
@@ -90,12 +75,91 @@ def _normalized_external_url(value):
     return value.rstrip("/")
 
 
+def _plugin_config_value(name):
+    env_value = os.getenv(name)
+    if env_value is not None:
+        return env_value.strip()
+
+    if not CONFIG_PATH.is_file():
+        return ""
+
+    try:
+        for raw_line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != name:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            return value.strip()
+    except OSError:
+        return ""
+
+    return ""
+
+
+def _remote_api_base():
+    return _normalized_external_url(_plugin_config_value("XLJWORKFLOWCIPHER_API_BASE"))
+
+
+def _remote_enabled():
+    return bool(_remote_api_base())
+
+
+async def _proxy_remote_api(request, path):
+    remote_api_base = _remote_api_base()
+    if not remote_api_base:
+        return _error_response("Remote backend is not configured.", status=502)
+
+    headers = {}
+    for header_name in ("Accept", "Content-Type", "Cookie"):
+        header_value = request.headers.get(header_name)
+        if header_value:
+            headers[header_name] = header_value
+
+    request_body = await request.read()
+    target_url = f"{remote_api_base}{path}"
+
+    try:
+        timeout = ClientTimeout(total=30)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.request(
+                request.method,
+                target_url,
+                params=request.query,
+                data=request_body if request_body else None,
+                headers=headers,
+                allow_redirects=False,
+            ) as upstream:
+                response = web.Response(
+                    status=upstream.status,
+                    body=await upstream.read(),
+                )
+                content_type = upstream.headers.get("Content-Type")
+                if content_type:
+                    response.headers["Content-Type"] = content_type
+                for cookie_value in upstream.headers.getall("Set-Cookie", []):
+                    response.headers.add("Set-Cookie", cookie_value)
+                return response
+    except Exception as exc:
+        return _error_response(f"Remote backend request failed: {exc}", status=502)
+
+
 def _frontend_config_payload():
-    api_base = _normalized_external_url(get_configured_api_base() or os.getenv("XLJWORKFLOWCIPHER_API_BASE"))
+    api_base = _remote_api_base()
+    portal_url = _plugin_config_value("XLJWORKFLOWCIPHER_PORTAL_URL")
+    if not portal_url and api_base:
+        portal_url = f"{api_base}/xljworkflowcipher/portal"
+    if not portal_url:
+        portal_url = "/xljworkflowcipher/portal"
+    remote_enabled = bool(api_base) or portal_url.startswith(("http://", "https://"))
     return {
         "api_base": api_base,
-        "portal_url": "/xljworkflowcipher/portal",
-        "remote_enabled": bool(api_base),
+        "portal_url": portal_url,
+        "remote_enabled": remote_enabled,
     }
 
 
@@ -148,14 +212,10 @@ async def workflow_cipher_decrypt_selection(request):
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/register")
 async def xljworkflowcipher_register(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/register")
     try:
         json_data = await request.json()
-        if has_configured_api_base():
-            payload, session_token = register_portal_user(
-                json_data.get("username", ""),
-                json_data.get("password", ""),
-            )
-            return _session_response(payload, session_token=session_token)
         register_user(json_data.get("username", ""), json_data.get("password", ""))
         session_token, user = login_user(json_data.get("username", ""), json_data.get("password", ""))
         return _session_response({"user": user}, session_token=session_token)
@@ -167,14 +227,10 @@ async def xljworkflowcipher_register(request):
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/login")
 async def xljworkflowcipher_login(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/login")
     try:
         json_data = await request.json()
-        if has_configured_api_base():
-            payload, session_token = login_portal_user(
-                json_data.get("username", ""),
-                json_data.get("password", ""),
-            )
-            return _session_response(payload, session_token=session_token)
         session_token, user = login_user(json_data.get("username", ""), json_data.get("password", ""))
         return _session_response({"user": user}, session_token=session_token)
     except KeyStoreError as exc:
@@ -185,15 +241,9 @@ async def xljworkflowcipher_login(request):
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/logout")
 async def xljworkflowcipher_logout(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/logout")
     try:
-        token = _session_token(request)
-        if has_configured_api_base():
-            if token:
-                try:
-                    logout_portal_user(token)
-                except KeyStoreError:
-                    pass
-            return _session_response({"ok": True}, clear_session=True)
         _, token = _authenticated_user(request)
         logout_user(token)
         return _session_response({"ok": True}, clear_session=True)
@@ -205,53 +255,38 @@ async def xljworkflowcipher_logout(request):
 
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/api/me")
 async def xljworkflowcipher_me(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/me")
     try:
-        if has_configured_api_base():
-            token = _session_token(request)
-            if not token:
-                raise KeyStoreError("Please log in first.")
-            return web.json_response(fetch_portal_me(token))
         user, _token = _authenticated_user(request)
         groups = list_workflow_groups(user["id"])
         return web.json_response({"user": user, "groups": groups})
     except KeyStoreError as exc:
-        return _error_response(exc, status=401, clear_session=True)
+        return _error_response(exc, status=401)
     except Exception as exc:
         return _error_response(exc, status=500)
 
 
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/api/workflows")
 async def xljworkflowcipher_list_workflows(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/workflows")
     try:
-        if has_configured_api_base():
-            token = _session_token(request)
-            if not token:
-                raise KeyStoreError("Please log in first.")
-            return web.json_response(list_portal_workflows(token))
         user, _token = _authenticated_user(request)
         return web.json_response({"groups": list_workflow_groups(user["id"])})
     except KeyStoreError as exc:
-        return _error_response(exc, status=401, clear_session=True)
+        return _error_response(exc, status=401)
     except Exception as exc:
         return _error_response(exc, status=500)
 
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows")
 async def xljworkflowcipher_upsert_workflow(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/workflows")
     try:
-        json_data = await request.json()
-        if has_configured_api_base():
-            token = _session_token(request)
-            if not token:
-                raise KeyStoreError("Please log in first.")
-            return web.json_response(
-                upsert_portal_workflow(
-                    token,
-                    json_data.get("code", ""),
-                    json_data.get("name", ""),
-                )
-            )
         user, _token = _authenticated_user(request)
+        json_data = await request.json()
         group = upsert_workflow_group(
             user["id"],
             json_data.get("code", ""),
@@ -266,20 +301,14 @@ async def xljworkflowcipher_upsert_workflow(request):
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/keys")
 async def xljworkflowcipher_generate_key(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/keys",
+        )
     try:
-        json_data = await request.json()
-        if has_configured_api_base():
-            token = _session_token(request)
-            if not token:
-                raise KeyStoreError("Please log in first.")
-            return web.json_response(
-                generate_portal_workflow_key(
-                    token,
-                    int(request.match_info["group_id"]),
-                    json_data.get("expiry_mode", "unlimited"),
-                )
-            )
         user, _token = _authenticated_user(request)
+        json_data = await request.json()
         key_data = generate_workflow_key(
             user["id"],
             int(request.match_info["group_id"]),
@@ -294,17 +323,12 @@ async def xljworkflowcipher_generate_key(request):
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/disable")
 async def xljworkflowcipher_disable_group(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/disable",
+        )
     try:
-        if has_configured_api_base():
-            token = _session_token(request)
-            if not token:
-                raise KeyStoreError("Please log in first.")
-            return web.json_response(
-                disable_portal_workflow_group(
-                    token,
-                    int(request.match_info["group_id"]),
-                )
-            )
         user, _token = _authenticated_user(request)
         group = disable_workflow_group(user["id"], int(request.match_info["group_id"]))
         return web.json_response({"group": group})
@@ -316,17 +340,12 @@ async def xljworkflowcipher_disable_group(request):
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/destroy")
 async def xljworkflowcipher_destroy_group(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/destroy",
+        )
     try:
-        if has_configured_api_base():
-            token = _session_token(request)
-            if not token:
-                raise KeyStoreError("Please log in first.")
-            return web.json_response(
-                destroy_portal_workflow_group(
-                    token,
-                    int(request.match_info["group_id"]),
-                )
-            )
         user, _token = _authenticated_user(request)
         group = destroy_workflow_group(user["id"], int(request.match_info["group_id"]))
         return web.json_response({"group": group})
@@ -338,27 +357,29 @@ async def xljworkflowcipher_destroy_group(request):
 
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/api/key-groups/status")
 async def xljworkflowcipher_group_status(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/key-groups/status")
     try:
         code = request.query.get("code", "")
-        return web.json_response(fetch_workflow_group_status(code))
-    except KeyStoreError as exc:
-        return _error_response(exc, status=502)
+        return web.json_response(get_workflow_group_status(code))
     except Exception as exc:
         return _error_response(exc, status=500)
 
 
 @server.PromptServer.instance.routes.post("/xljworkflowcipher/api/access/validate")
 async def xljworkflowcipher_access_validate(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/access/validate")
     try:
         json_data = await request.json()
         return web.json_response(
-            check_access_key(
+            validate_access_key(
                 json_data.get("code", ""),
                 json_data.get("access_key", ""),
             )
         )
     except KeyStoreError as exc:
-        return _error_response(exc, status=502)
+        return _error_response(exc, status=400)
     except Exception as exc:
         return _error_response(exc, status=500)
 
@@ -370,6 +391,9 @@ async def xljworkflowcipher_frontend_config(request):
 
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/portal")
 async def xljworkflowcipher_portal(request):
+    portal_url = _frontend_config_payload()["portal_url"]
+    if portal_url.startswith(("http://", "https://")):
+        raise web.HTTPFound(portal_url)
     return web.FileResponse(PORTAL_DIR / "index.html")
 
 

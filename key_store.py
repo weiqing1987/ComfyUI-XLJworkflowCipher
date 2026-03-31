@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parent / "data" / "xljworkflowcipher.sqlite3"
-DB_PATH = Path(os.getenv("XLJWORKFLOWCIPHER_DB_PATH", str(_DEFAULT_DB_PATH))).expanduser()
+DB_PATH = Path(__file__).resolve().parent / "data" / "xljworkflowcipher.sqlite3"
+CONFIG_PATH = Path(__file__).resolve().parent / "service.env"
 SESSION_COOKIE_NAME = "xljworkflowcipher_session"
 SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 PASSWORD_ITERATIONS = 200000
+REMOTE_TIMEOUT_SECONDS = 15
 EXPIRY_MODES = {
     "day": timedelta(days=1),
     "week": timedelta(days=7),
@@ -24,6 +29,85 @@ EXPIRY_MODES = {
 
 class KeyStoreError(ValueError):
     pass
+
+
+def _normalized_external_url(value: str | None) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    return value.rstrip("/")
+
+
+def _plugin_config_value(name: str) -> str:
+    env_value = os.getenv(name)
+    if env_value is not None:
+        return env_value.strip()
+
+    if not CONFIG_PATH.is_file():
+        return ""
+
+    try:
+        for raw_line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != name:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            return value.strip()
+    except OSError:
+        return ""
+
+    return ""
+
+
+def _remote_api_base() -> str:
+    return _normalized_external_url(_plugin_config_value("XLJWORKFLOWCIPHER_API_BASE"))
+
+
+def _remote_request_json(path: str, payload: dict | None = None) -> dict | None:
+    remote_api_base = _remote_api_base()
+    if not remote_api_base:
+        return None
+
+    request_headers = {"Accept": "application/json"}
+    request_data = None
+    request_method = "GET"
+    if payload is not None:
+        request_headers["Content-Type"] = "application/json"
+        request_data = json.dumps(payload).encode("utf-8")
+        request_method = "POST"
+
+    request = urllib.request.Request(
+        f"{remote_api_base}{path}",
+        data=request_data,
+        headers=request_headers,
+        method=request_method,
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=REMOTE_TIMEOUT_SECONDS) as response:
+            raw_payload = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raw_payload = exc.read().decode("utf-8", errors="replace")
+        try:
+            error_payload = json.loads(raw_payload) if raw_payload else {}
+        except json.JSONDecodeError:
+            error_payload = {}
+        return {
+            "error": error_payload.get("error") or f"Remote request failed: HTTP {exc.code}",
+            "status_code": exc.code,
+        }
+    except OSError as exc:
+        return {"error": f"Remote request failed: {exc}"}
+
+    try:
+        return json.loads(raw_payload) if raw_payload else {}
+    except json.JSONDecodeError:
+        return {"error": "Remote service returned invalid JSON."}
 
 
 def _utcnow() -> datetime:
@@ -443,6 +527,14 @@ def get_workflow_group_status(code: str) -> dict:
     if not code:
         return {"found": False, "status": "missing_group"}
 
+    remote_payload = _remote_request_json(
+        f"/xljworkflowcipher/api/key-groups/status?{urllib.parse.urlencode({'code': code})}"
+    )
+    if remote_payload is not None:
+        if remote_payload.get("error"):
+            return {"found": False, "status": "remote_error", "error": remote_payload["error"]}
+        return remote_payload
+
     with _connect() as connection:
         row = connection.execute(
             "SELECT * FROM workflow_groups WHERE code = ? COLLATE NOCASE",
@@ -460,6 +552,43 @@ def get_workflow_group_status(code: str) -> dict:
 
 
 def validate_access_key(code: str, access_key: str) -> dict:
+    remote_api_base = _remote_api_base()
+    access_key = (access_key or "").strip()
+    if remote_api_base:
+        if not access_key:
+            return {"valid": False, "bypass": False, "status": "missing_key"}
+
+        remote_payload = _remote_request_json(
+            "/xljworkflowcipher/api/access/validate",
+            {
+                "key": access_key,
+            },
+        )
+        if remote_payload is not None:
+            if remote_payload.get("error"):
+                return {
+                    "valid": False,
+                    "bypass": False,
+                    "status": "remote_error",
+                    "error": remote_payload["error"],
+                }
+            if "valid" in remote_payload or "bypass" in remote_payload:
+                return remote_payload
+            if remote_payload.get("ok") is False:
+                return {
+                    "valid": False,
+                    "bypass": False,
+                    "status": "invalid_key",
+                    "error": remote_payload.get("error") or "Access key is invalid.",
+                }
+            return {
+                "valid": True,
+                "bypass": False,
+                "status": "active",
+                "key": access_key,
+                **remote_payload,
+            }
+
     group_status = get_workflow_group_status(code)
     if not group_status["found"]:
         return {"valid": False, "bypass": False, "status": "missing_group"}

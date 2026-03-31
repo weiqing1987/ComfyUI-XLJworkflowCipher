@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>XLJworkflowCipher Personal Center</title>
+    <title>XLJworkflowCipher Key Portal</title>
     <link rel="stylesheet" href="/xljworkflowcipher/portal/styles.css" />
   </head>
   <body>
@@ -11,22 +11,22 @@
       <section class="hero">
         <div>
           <p class="eyebrow">XLJworkflowCipher</p>
-          <h1>个人中心</h1>
+          <h1>Workflow Key Portal</h1>
           <p class="summary">
-            在这里登录创作者账号、管理工作流分组、生成访问密钥，并查看当前账号下的授权状态。
+            为加密工作流创建分组、生成密钥、停用或销毁授权。
           </p>
         </div>
-        <div class="status" id="status">正在加载...</div>
+        <div class="status" id="status">正在初始化...</div>
       </section>
 
       <section class="panel auth-panel" id="authPanel">
         <div class="panel-head">
-          <h2>登录 / 注册</h2>
-          <p>启用密钥授权前，请先登录创作者账号。没有账号也可以直接在这里注册。</p>
+          <h2>注册 / 登录</h2>
+          <p>开发者先登录，再管理密钥组。</p>
         </div>
         <form id="authForm" class="form-grid">
           <label>
-            <span>账号</span>
+            <span>用户名</span>
             <input id="username" name="username" autocomplete="username" required />
           </label>
           <label>
@@ -43,7 +43,7 @@
       <section class="panel dashboard hidden" id="dashboard">
         <div class="panel-head split">
           <div>
-            <h2>个人中心</h2>
+            <h2>工作流密钥组</h2>
             <p id="welcomeText"></p>
           </div>
           <button type="button" class="ghost" id="logoutButton">退出登录</button>
@@ -51,18 +51,18 @@
 
         <form id="workflowForm" class="workflow-form">
           <label>
-            <span>工作流 ID / 代号</span>
+            <span>工作流编号 / 名称</span>
             <input id="workflowCode" name="code" placeholder="例如: grok_video_pro" required />
           </label>
           <label>
-            <span>工作流名称</span>
-            <input id="workflowName" name="name" placeholder="例如: Grok 视频 Pro" />
+            <span>显示名称</span>
+            <input id="workflowName" name="name" placeholder="例如: Grok 图生视频 Pro" />
           </label>
-          <button type="submit">新增工作流</button>
+          <button type="submit">保存工作流密钥组</button>
         </form>
 
         <div class="list-head">
-          <h3>工作流分组</h3>
+          <h3>已保存工作流</h3>
           <button type="button" class="ghost" id="refreshButton">刷新</button>
         </div>
         <div id="groupsList" class="groups-list"></div>
@@ -82,10 +82,10 @@
           <label>
             <span>有效期</span>
             <select class="expiry-select">
-              <option value="day">1 天</option>
-              <option value="week">1 周</option>
-              <option value="month">1 个月</option>
-              <option value="unlimited">不限</option>
+              <option value="day">按天</option>
+              <option value="week">按周</option>
+              <option value="month">按月</option>
+              <option value="unlimited">不限时</option>
             </select>
           </label>
           <button type="button" class="generate-key">生成密钥</button>
@@ -94,8 +94,8 @@
         </div>
         <div class="keys-wrap">
           <div class="keys-head">
-            <span>访问密钥</span>
-            <span class="hint">销毁后无法恢复，已经分发出去的工作流也会随之失效。</span>
+            <span>密钥列表</span>
+            <span class="hint">销毁后，工作流会自动解除密钥校验。</span>
           </div>
           <div class="keys-table"></div>
         </div>

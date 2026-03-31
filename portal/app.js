@@ -49,13 +49,6 @@ function statusClass(status) {
   return "";
 }
 
-function applyStatusClass(element, status) {
-  const cls = statusClass(status);
-  if (cls) {
-    element.classList.add(cls);
-  }
-}
-
 async function refreshGroups() {
   if (!state.user) {
     return;
@@ -85,7 +78,7 @@ function renderGroups() {
     name.textContent = group.name;
     code.textContent = `编号: ${group.code}`;
     status.textContent = group.status;
-    applyStatusClass(status, group.status);
+    status.classList.add(statusClass(group.status));
 
     fragment.querySelector(".generate-key").addEventListener("click", async () => {
       try {
