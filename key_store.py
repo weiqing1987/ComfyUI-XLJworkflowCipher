@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "xljworkflowcipher.sqlite3"
+CONFIG_PATH = Path(__file__).resolve().parent / "service.env"
 SESSION_COOKIE_NAME = "xljworkflowcipher_session"
 SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 PASSWORD_ITERATIONS = 200000
@@ -37,8 +38,34 @@ def _normalized_external_url(value: str | None) -> str:
     return value.rstrip("/")
 
 
+def _plugin_config_value(name: str) -> str:
+    env_value = os.getenv(name)
+    if env_value is not None:
+        return env_value.strip()
+
+    if not CONFIG_PATH.is_file():
+        return ""
+
+    try:
+        for raw_line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != name:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            return value.strip()
+    except OSError:
+        return ""
+
+    return ""
+
+
 def _remote_api_base() -> str:
-    return _normalized_external_url(os.getenv("XLJWORKFLOWCIPHER_API_BASE"))
+    return _normalized_external_url(_plugin_config_value("XLJWORKFLOWCIPHER_API_BASE"))
 
 
 def _remote_request_json(path: str, payload: dict | None = None) -> dict | None:
@@ -525,22 +552,42 @@ def get_workflow_group_status(code: str) -> dict:
 
 
 def validate_access_key(code: str, access_key: str) -> dict:
-    remote_payload = _remote_request_json(
-        "/xljworkflowcipher/api/access/validate",
-        {
-            "code": code,
-            "access_key": access_key,
-        },
-    )
-    if remote_payload is not None:
-        if remote_payload.get("error"):
+    remote_api_base = _remote_api_base()
+    access_key = (access_key or "").strip()
+    if remote_api_base:
+        if not access_key:
+            return {"valid": False, "bypass": False, "status": "missing_key"}
+
+        remote_payload = _remote_request_json(
+            "/xljworkflowcipher/api/access/validate",
+            {
+                "key": access_key,
+            },
+        )
+        if remote_payload is not None:
+            if remote_payload.get("error"):
+                return {
+                    "valid": False,
+                    "bypass": False,
+                    "status": "remote_error",
+                    "error": remote_payload["error"],
+                }
+            if "valid" in remote_payload or "bypass" in remote_payload:
+                return remote_payload
+            if remote_payload.get("ok") is False:
+                return {
+                    "valid": False,
+                    "bypass": False,
+                    "status": "invalid_key",
+                    "error": remote_payload.get("error") or "Access key is invalid.",
+                }
             return {
-                "valid": False,
+                "valid": True,
                 "bypass": False,
-                "status": "remote_error",
-                "error": remote_payload["error"],
+                "status": "active",
+                "key": access_key,
+                **remote_payload,
             }
-        return remote_payload
 
     group_status = get_workflow_group_status(code)
     if not group_status["found"]:

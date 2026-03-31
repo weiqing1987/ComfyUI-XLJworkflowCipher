@@ -33,6 +33,7 @@ from .workflow_cipher import (
 
 
 PORTAL_DIR = Path(__file__).resolve().parent / "portal"
+CONFIG_PATH = Path(__file__).resolve().parent / "service.env"
 ensure_initialized()
 
 
@@ -74,8 +75,34 @@ def _normalized_external_url(value):
     return value.rstrip("/")
 
 
+def _plugin_config_value(name):
+    env_value = os.getenv(name)
+    if env_value is not None:
+        return env_value.strip()
+
+    if not CONFIG_PATH.is_file():
+        return ""
+
+    try:
+        for raw_line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != name:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            return value.strip()
+    except OSError:
+        return ""
+
+    return ""
+
+
 def _remote_api_base():
-    return _normalized_external_url(os.getenv("XLJWORKFLOWCIPHER_API_BASE"))
+    return _normalized_external_url(_plugin_config_value("XLJWORKFLOWCIPHER_API_BASE"))
 
 
 def _remote_enabled():
@@ -123,15 +150,16 @@ async def _proxy_remote_api(request, path):
 
 def _frontend_config_payload():
     api_base = _remote_api_base()
-    portal_url = (os.getenv("XLJWORKFLOWCIPHER_PORTAL_URL") or "").strip()
+    portal_url = _plugin_config_value("XLJWORKFLOWCIPHER_PORTAL_URL")
     if not portal_url and api_base:
         portal_url = f"{api_base}/xljworkflowcipher/portal"
     if not portal_url:
         portal_url = "/xljworkflowcipher/portal"
+    remote_enabled = bool(api_base) or portal_url.startswith(("http://", "https://"))
     return {
         "api_base": api_base,
         "portal_url": portal_url,
-        "remote_enabled": bool(api_base),
+        "remote_enabled": remote_enabled,
     }
 
 
@@ -363,6 +391,9 @@ async def xljworkflowcipher_frontend_config(request):
 
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/portal")
 async def xljworkflowcipher_portal(request):
+    portal_url = _frontend_config_payload()["portal_url"]
+    if portal_url.startswith(("http://", "https://")):
+        raise web.HTTPFound(portal_url)
     return web.FileResponse(PORTAL_DIR / "index.html")
 
 
