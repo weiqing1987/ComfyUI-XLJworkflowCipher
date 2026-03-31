@@ -1,85 +1,87 @@
 # ComfyUI-XLJworkflowCipher
 
-Local workflow encryption nodes for ComfyUI. Lets you hide private nodes and model parameters from end users while still letting them run the workflow normally — no password required to execute.
+Workflow encryption nodes for ComfyUI. This plugin lets creators hide private nodes and model parameters while still allowing end users to run the workflow normally.
 
-This plugin is inspired by the graph-shell pattern used by `RiceRound/ComfyUI_CryptoCat`, but implemented as a fully offline packer:
+This project is inspired by the graph-shell pattern used by `RiceRound/ComfyUI_CryptoCat`, but keeps the encrypted payload embedded directly inside the exported workflow.
 
-- no external auth service
-- no remote template upload
-- no serial number issuance
-- encrypted subgraph is embedded directly into the exported shell workflow
-- decryption and execution happen locally and automatically at runtime
+## Features
 
----
-
-## Design philosophy
-
-> **Anyone can run the workflow. Nobody can see what's inside.**
-
-The password is only used to visually restore (unlock) the hidden nodes in the editor. At runtime, the vault decrypts and executes automatically — the `password` box can be left blank.
-
-This is useful when you want to:
-- share a workflow without revealing your node structure or model choices
-- distribute a finished pipeline without exposing proprietary parameters
-- protect prompt engineering or LoRA configurations from inspection
-
-The encryption uses PBKDF2-HMAC-SHA256 with integrity verification. It is practical for local workflow protection, but is not a formally audited cryptographic product.
-
----
+- Selection-based workflow encryption
+- Optional access-key validation
+- Remote workflow and license backend support
+- Creator portal integration
+- Local decryption for creators who know the passphrase
 
 ## Nodes
 
-### ComfyUI-XLJworkflowCipher (selection-based, recommended)
+### ComfyUI-XLJworkflowCipher
 
-Encrypts a selected group of nodes directly in the current workflow using right-click → "Encrypt Selection". Produces a self-contained vault node that runs without any password input.
+Encrypts selected nodes directly inside the current workflow and replaces them with a single vault node.
 
-**Inputs:** up to 16 public inputs routed into the hidden subgraph
-**Outputs:** up to 16 outputs from the hidden subgraph back to the public graph
-**password:** leave blank to run normally; enter the original passphrase to visually restore the hidden nodes
-**access_key:** shown only when key mode is enabled; a valid key is required before the workflow can run
+Inputs:
+- Up to 16 public inputs
 
-### XLJworkflowCipher Encrypt + Bridge + Decrypt (flow-based)
+Outputs:
+- Up to 16 public outputs
 
-A three-node flow for more explicit control.
+Widgets:
+- `password`: leave blank for normal execution; enter the original passphrase to visually restore hidden nodes
+- `access_key`: shown only when key mode is enabled
 
-| Node | Purpose |
-|---|---|
-| `XLJworkflowCipher Encrypt` | Marks the boundary where public inputs enter the private subgraph. Run this node once to export the encrypted shell workflow. |
-| `XLJworkflowCipher Bridge` | Marks the boundary where private outputs leave the private subgraph. |
-| `XLJworkflowCipher Decrypt` | Shell node in the exported workflow. Decrypts and expands the hidden subgraph at runtime. |
-| `XLJworkflowCipher Random Seed` | Utility node that generates a random integer seed each run. |
+### XLJworkflowCipher Encrypt + Bridge + Decrypt
 
----
+An alternative three-node flow for explicit packing and restoring.
 
-## Usage — Vault (selection-based)
+- `XLJworkflowCipher Encrypt`: marks where public inputs enter the private subgraph
+- `XLJworkflowCipher Bridge`: marks where private outputs leave the private subgraph
+- `XLJworkflowCipher Decrypt`: shell node in the exported workflow
+- `XLJworkflowCipher Random Seed`: utility node that generates a random integer seed
+
+## Usage
+
+### Selection-based vault mode
 
 1. Build your workflow normally.
-2. Select the nodes you want to hide (the private subgraph).
-3. Right-click → **Encrypt Selection** → enter a passphrase.
-4. The selected nodes are replaced by a single **ComfyUI-XLJworkflowCipher** shell node.
-5. Share or run the resulting workflow. The `password` box can be left empty — execution is automatic.
-6. To restore the hidden nodes visually, enter the original passphrase in the `password` box and run.
+2. Select the nodes you want to hide.
+3. Right-click and choose `Encrypt Selection`.
+4. Enter a passphrase.
+5. The selected nodes are replaced by a single vault node.
+6. Share or run the resulting workflow.
 
-## Usage — Encrypt/Bridge/Decrypt (flow-based)
+To visually restore the hidden nodes, enter the original passphrase in the `password` field and run again.
+
+### Flow-based mode
 
 1. Place `XLJworkflowCipher Encrypt` before the private part of your graph.
-2. Feed public upstream values into `input_1` … `input_16`.
+2. Feed public upstream values into `input_1` to `input_16`.
 3. Place `XLJworkflowCipher Bridge` after the private part of your graph.
-4. Feed private outputs into `value_1` … `value_16`.
-5. Connect the bridge outputs to the public downstream part of the graph.
-6. Run the encrypt node once — a shell workflow JSON is written to the ComfyUI output directory.
+4. Feed private outputs into `value_1` to `value_16`.
+5. Connect bridge outputs to the public downstream graph.
+6. Run the encrypt node once to export the shell workflow JSON.
 7. Import the generated JSON into ComfyUI.
-8. The shell workflow runs automatically. Enter the passphrase in `XLJworkflowCipher Decrypt` only if you want to visually inspect or restore the hidden nodes.
 
----
+## Remote Backend
+
+The plugin supports a remote backend for creator login, workflow registration, and key validation.
+
+Default config shipped with the plugin:
+
+```env
+XLJWORKFLOWCIPHER_API_BASE=https://cf.xinlingjunai.net
+XLJWORKFLOWCIPHER_PORTAL_URL=https://cf.xinlingjunai.net/xljworkflowcipher/portal
+```
+
+You can override these values by editing `service.env`.
+
+Creator portal:
+
+- `https://cf.xinlingjunai.net/xljworkflowcipher/portal`
 
 ## Notes
 
-- The encrypted payload is embedded in the node's `properties` field inside the workflow JSON. The runtime passphrase is also stored there as `workflowcipher_runtime_key`, which is what enables passwordless execution.
-- Selection encryption now supports an optional key mode. When enabled, the vault stores a workflow key-group code and requires a valid `access_key` at runtime.
-- The management portal is served from `http://127.0.0.1:8188/xljworkflowcipher/portal` inside the running ComfyUI server.
-- **Online Key Management Portal**: https://cf.xinlingjunai.net/ — Create key groups, generate access keys, and manage workflow licenses remotely.
-- Exactly one Encrypt node and one Bridge node are supported per flow-based workflow.
+- The encrypted payload is stored in the workflow JSON inside node `properties`.
+- Selection encryption supports optional key mode. When enabled, the vault stores a workflow key-group code and requires a valid `access_key` at runtime.
+- Exactly one Encrypt node and one Bridge node are supported in flow-based mode.
 - The vault node supports up to 16 public inputs and 16 public outputs.
-- Hidden nodes are completely absent from the exported workflow JSON — only the encrypted binary payload is present.
-- Future extension point: replace `workflowcipher_runtime_key` with a server-side key fetch for stricter access control.
+- Hidden nodes are absent from the exported workflow JSON. Only the encrypted payload remains.
+- The runtime passphrase mechanism is practical for workflow protection, but this is not a formally audited cryptographic product.
