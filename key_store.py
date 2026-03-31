@@ -379,14 +379,24 @@ def upsert_workflow_group(user_id: int, code: str, name: str) -> dict:
                 (int(user_id), code, name, now, now),
             )
         else:
-            connection.execute(
-                """
-                UPDATE workflow_groups
-                SET name = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (name, now, int(existing["id"])),
-            )
+            if existing["status"] in {"deleted", "destroyed"}:
+                connection.execute(
+                    """
+                    UPDATE workflow_groups
+                    SET name = ?, status = 'active', key_required = 1, updated_at = ?, destroyed_at = NULL
+                    WHERE id = ?
+                    """,
+                    (name, now, int(existing["id"])),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE workflow_groups
+                    SET name = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (name, now, int(existing["id"])),
+                )
         connection.commit()
 
         row = connection.execute(
