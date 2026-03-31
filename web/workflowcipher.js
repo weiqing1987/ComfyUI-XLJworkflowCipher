@@ -172,6 +172,70 @@ async function requestJson(url, options = {}) {
   return data;
 }
 
+function normalizedApiBase(config = frontendConfigCache) {
+  return String(config?.api_base || "").trim().replace(/\/+$/, "");
+}
+
+function hasCrossOriginApiBase(config = frontendConfigCache) {
+  const apiBase = normalizedApiBase(config);
+  if (!apiBase) {
+    return false;
+  }
+  try {
+    return new URL(apiBase).origin !== window.location.origin;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function requestRemoteJson(url, options = {}) {
+  const headers = {
+    ...(options.headers || {}),
+  };
+  if (options.body !== undefined && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type")) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      credentials: "include",
+      headers,
+      ...options,
+    });
+  } catch (_error) {
+    throw new Error("无法连接远程创作者后台，请检查域名、HTTPS 和 CORS 配置。");
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error("远程创作者后台返回了非 JSON 响应，请确认接口地址和登录状态。");
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.error) {
+    throw new Error(data.error || `${BRAND_NAME} remote request failed: ${response.status}`);
+  }
+  return data;
+}
+
+async function requestBackendJson(path, options = {}, config = frontendConfigCache) {
+  try {
+    return await requestJson(path, options);
+  } catch (localError) {
+    if (!hasCrossOriginApiBase(config)) {
+      throw localError;
+    }
+
+    const apiBase = normalizedApiBase(config);
+    try {
+      return await requestRemoteJson(`${apiBase}${path}`, options);
+    } catch (remoteError) {
+      throw remoteError || localError;
+    }
+  }
+}
+
 async function getFrontendConfig(forceRefresh = false) {
   if (!frontendConfigPromise || forceRefresh) {
     frontendConfigPromise = requestJson(FRONTEND_CONFIG_PATH)
@@ -462,9 +526,13 @@ async function ensureRemoteWorkflowSynced(selectedNodes, options) {
     return options?.keyGroup || "";
   }
 
+  const config = await getFrontendConfig();
   try {
-    await requestJson("/xljworkflowcipher/api/me");
+    await requestBackendJson("/xljworkflowcipher/api/me", {}, config);
   } catch (_error) {
+    if (hasCrossOriginApiBase(config)) {
+      throw new Error("\u8bf7\u5148登录创作者后台；如果已登录仍失败，请确认后端已允许跨域凭证（CORS + SameSite=None Cookie）。");
+    }
     throw new Error("\u8bf7\u5148\u901a\u8fc7\u672c\u5730\u6388\u6743\u9875\u767b\u5f55\uff0c\u518d\u521b\u5efa\u5e26\u5bc6\u94a5\u6821\u9a8c\u7684\u52a0\u5bc6\u5de5\u4f5c\u6d41\u3002");
   }
 
@@ -488,11 +556,11 @@ async function ensureRemoteWorkflowSynced(selectedNodes, options) {
   let lastError = null;
   for (const payload of attempts) {
     try {
-      const synced = await requestJson("/xljworkflowcipher/api/workflows", {
+      const synced = await requestBackendJson("/xljworkflowcipher/api/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
+      }, config);
       return extractSyncedWorkflowCode(synced, options.keyGroup);
     } catch (error) {
       lastError = error;
