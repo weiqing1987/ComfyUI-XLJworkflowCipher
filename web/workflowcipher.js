@@ -19,6 +19,8 @@ const RESTORE_LABEL = `${BRAND_NAME} \u8f93\u5165\u5bc6\u7801\u5e76\u8fd8\u539f`
 const PORTAL_LABEL = `${BRAND_NAME} \u6388\u6743\u540e\u53f0`;
 const FRONTEND_CONFIG_PATH = "/xljworkflowcipher/api/frontend-config";
 const DEFAULT_PORTAL_PATH = "/xljworkflowcipher/portal";
+const HARDCODED_API_BASE = "https://cf.xinlingjunai.net";
+const HARDCODED_PORTAL_URL = `${HARDCODED_API_BASE}/xljworkflowcipher/portal`;
 
 let frontendConfigCache = {
   api_base: "",
@@ -223,11 +225,11 @@ async function requestBackendJson(path, options = {}, config = frontendConfigCac
   try {
     return await requestJson(path, options);
   } catch (localError) {
-    if (!hasCrossOriginApiBase(config)) {
+    const apiBase = normalizedApiBase(config) || HARDCODED_API_BASE;
+    if (!apiBase) {
       throw localError;
     }
 
-    const apiBase = normalizedApiBase(config);
     try {
       return await requestRemoteJson(`${apiBase}${path}`, options);
     } catch (remoteError) {
@@ -243,13 +245,24 @@ async function getFrontendConfig(forceRefresh = false) {
         frontendConfigCache = {
           ...frontendConfigCache,
           ...(payload || {}),
-          portal_url: payload?.portal_url || DEFAULT_PORTAL_PATH,
+          api_base: payload?.api_base || frontendConfigCache.api_base || HARDCODED_API_BASE,
+          portal_url: payload?.portal_url || frontendConfigCache.portal_url || HARDCODED_PORTAL_URL,
+          remote_enabled: Boolean(payload?.remote_enabled ?? true),
         };
         return frontendConfigCache;
       })
       .catch((error) => {
+        frontendConfigCache = {
+          ...frontendConfigCache,
+          api_base: normalizedApiBase(frontendConfigCache) || HARDCODED_API_BASE,
+          portal_url:
+            frontendConfigCache.portal_url && frontendConfigCache.portal_url !== DEFAULT_PORTAL_PATH
+              ? frontendConfigCache.portal_url
+              : HARDCODED_PORTAL_URL,
+          remote_enabled: true,
+        };
         if (forceRefresh) {
-          throw error;
+          return frontendConfigCache;
         }
         return frontendConfigCache;
       });
@@ -266,7 +279,10 @@ function openBrowserTab(url) {
 }
 
 async function openPortalPage() {
-  const fallbackUrl = frontendConfigCache.portal_url || DEFAULT_PORTAL_PATH;
+  const fallbackUrl =
+    frontendConfigCache.portal_url && frontendConfigCache.portal_url !== DEFAULT_PORTAL_PATH
+      ? frontendConfigCache.portal_url
+      : HARDCODED_PORTAL_URL;
   try {
     const config = await getFrontendConfig();
     openBrowserTab(config?.portal_url || fallbackUrl);
