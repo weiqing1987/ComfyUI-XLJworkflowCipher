@@ -68,9 +68,23 @@ def _remote_api_base() -> str:
     return _normalized_external_url(_plugin_config_value("XLJWORKFLOWCIPHER_API_BASE"))
 
 
+def _proxy_remote_api_base() -> str:
+    return _normalized_external_url(
+        _plugin_config_value("XLJWORKFLOWCIPHER_PROXY_API_BASE")
+    )
+
+
+def _remote_api_bases() -> list[str]:
+    bases: list[str] = []
+    for candidate in (_proxy_remote_api_base(), _remote_api_base()):
+        if candidate and candidate not in bases:
+            bases.append(candidate)
+    return bases
+
+
 def _remote_request_json(path: str, payload: dict | None = None) -> dict | None:
-    remote_api_base = _remote_api_base()
-    if not remote_api_base:
+    remote_api_bases = _remote_api_bases()
+    if not remote_api_bases:
         return None
 
     request_headers = {"Accept": "application/json"}
@@ -81,33 +95,39 @@ def _remote_request_json(path: str, payload: dict | None = None) -> dict | None:
         request_data = json.dumps(payload).encode("utf-8")
         request_method = "POST"
 
-    request = urllib.request.Request(
-        f"{remote_api_base}{path}",
-        data=request_data,
-        headers=request_headers,
-        method=request_method,
-    )
+    last_error: dict | None = None
+    for remote_api_base in remote_api_bases:
+        request = urllib.request.Request(
+            f"{remote_api_base}{path}",
+            data=request_data,
+            headers=request_headers,
+            method=request_method,
+        )
 
-    try:
-        with urllib.request.urlopen(request, timeout=REMOTE_TIMEOUT_SECONDS) as response:
-            raw_payload = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        raw_payload = exc.read().decode("utf-8", errors="replace")
         try:
-            error_payload = json.loads(raw_payload) if raw_payload else {}
-        except json.JSONDecodeError:
-            error_payload = {}
-        return {
-            "error": error_payload.get("error") or f"Remote request failed: HTTP {exc.code}",
-            "status_code": exc.code,
-        }
-    except OSError as exc:
-        return {"error": f"Remote request failed: {exc}"}
+            with urllib.request.urlopen(request, timeout=REMOTE_TIMEOUT_SECONDS) as response:
+                raw_payload = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raw_payload = exc.read().decode("utf-8", errors="replace")
+            try:
+                error_payload = json.loads(raw_payload) if raw_payload else {}
+            except json.JSONDecodeError:
+                error_payload = {}
+            last_error = {
+                "error": error_payload.get("error") or f"Remote request failed: HTTP {exc.code}",
+                "status_code": exc.code,
+            }
+            continue
+        except OSError as exc:
+            last_error = {"error": f"Remote request failed: {exc}"}
+            continue
 
-    try:
-        return json.loads(raw_payload) if raw_payload else {}
-    except json.JSONDecodeError:
-        return {"error": "Remote service returned invalid JSON."}
+        try:
+            return json.loads(raw_payload) if raw_payload else {}
+        except json.JSONDecodeError:
+            return {"error": "Remote service returned invalid JSON."}
+
+    return last_error or {"error": "Remote request failed."}
 
 
 def _utcnow() -> datetime:
@@ -470,6 +490,35 @@ def generate_workflow_key(user_id: int, group_id: int, expiry_mode: str) -> dict
         return _serialize_key(row)
 
 
+def delete_workflow_key(user_id: int, group_id: int, key_id: int) -> dict:
+    with _connect() as connection:
+        group_row = connection.execute(
+            "SELECT * FROM workflow_groups WHERE id = ? AND user_id = ?",
+            (int(group_id), int(user_id)),
+        ).fetchone()
+        if group_row is None:
+            raise KeyStoreError("Workflow group does not exist.")
+
+        key_row = connection.execute(
+            """
+            SELECT *
+            FROM workflow_keys
+            WHERE id = ?
+              AND workflow_group_id = ?
+            """,
+            (int(key_id), int(group_id)),
+        ).fetchone()
+        if key_row is None:
+            raise KeyStoreError("Workflow key does not exist.")
+
+        connection.execute(
+            "DELETE FROM workflow_keys WHERE id = ?",
+            (int(key_id),),
+        )
+        connection.commit()
+        return _load_group_with_keys(connection, int(group_id))
+
+
 def disable_workflow_group(user_id: int, group_id: int) -> dict:
     now = _isoformat(_utcnow())
     with _connect() as connection:
@@ -562,15 +611,17 @@ def get_workflow_group_status(code: str) -> dict:
 
 
 def validate_access_key(code: str, access_key: str) -> dict:
-    remote_api_base = _remote_api_base()
+    remote_api_bases = _remote_api_bases()
     access_key = (access_key or "").strip()
-    if remote_api_base:
+    if remote_api_bases:
         if not access_key:
             return {"valid": False, "bypass": False, "status": "missing_key"}
 
         remote_payload = _remote_request_json(
             "/xljworkflowcipher/api/access/validate",
             {
+                "code": code,
+                "access_key": access_key,
                 "key": access_key,
             },
         )

@@ -9,6 +9,7 @@ from .key_store import (
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE_SECONDS,
     destroy_workflow_group,
+    delete_workflow_key,
     disable_workflow_group,
     ensure_initialized,
     generate_workflow_key,
@@ -322,6 +323,27 @@ async def xljworkflowcipher_generate_key(request):
             json_data.get("expiry_mode", "unlimited"),
         )
         return web.json_response({"key": key_data})
+    except KeyStoreError as exc:
+        return _error_response(exc, status=400)
+    except Exception as exc:
+        return _error_response(exc, status=500)
+
+
+@server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/keys/{key_id}/delete")
+async def xljworkflowcipher_delete_key(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/keys/{request.match_info['key_id']}/delete",
+        )
+    try:
+        user, _token = _authenticated_user(request)
+        group = delete_workflow_key(
+            user["id"],
+            int(request.match_info["group_id"]),
+            int(request.match_info["key_id"]),
+        )
+        return web.json_response({"group": group})
     except KeyStoreError as exc:
         return _error_response(exc, status=400)
     except Exception as exc:

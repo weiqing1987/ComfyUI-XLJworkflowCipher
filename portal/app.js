@@ -131,14 +131,32 @@ function renderGroups() {
           <div class="key-value">${key.access_key}</div>
           <span class="pill ${statusClass(key.status)}">${key.status}</span>
           <div class="hint">${expiryLabel(key.expiry_mode, key.expires_at)}</div>
-          <button type="button" class="ghost">复制</button>
+          <div class="key-actions">
+            <button type="button" class="ghost copy-key">复制</button>
+            <button type="button" class="danger delete-key">删除</button>
+          </div>
         `;
-        row.querySelector("button").addEventListener("click", async () => {
+        row.querySelector(".copy-key").addEventListener("click", async () => {
           try {
             await navigator.clipboard.writeText(key.access_key);
             setStatus(`已复制密钥 ${key.access_key}`);
           } catch (error) {
             setStatus(`复制失败: ${error.message}`, true);
+          }
+        });
+        row.querySelector(".delete-key").addEventListener("click", async () => {
+          const confirmed = window.confirm(`确认删除密钥 ${key.access_key} 吗？删除后将立即失效。`);
+          if (!confirmed) {
+            return;
+          }
+          try {
+            await requestJson(`/xljworkflowcipher/api/workflows/${group.id}/keys/${key.id}/delete`, {
+              method: "POST",
+            });
+            setStatus(`已删除密钥 ${key.access_key}`);
+            await refreshGroups();
+          } catch (error) {
+            setStatus(error.message, true);
           }
         });
         keysTable.appendChild(row);

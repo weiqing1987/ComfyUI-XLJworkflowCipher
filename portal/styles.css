@@ -228,6 +228,13 @@ button.danger {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.key-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .key-value {
   font-family: Consolas, "SFMono-Regular", monospace;
   word-break: break-all;
