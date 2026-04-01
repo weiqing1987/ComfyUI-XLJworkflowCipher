@@ -716,26 +716,100 @@ class WorkflowCipherPlanner:
 
 
 class WorkflowCipherRuntime:
-    def __init__(self, prompt, unique_id, payload):
+    def __init__(self, prompt, workflow, unique_id, payload):
         self.prompt = {str(key): value for key, value in prompt.items()}
+        self.workflow = workflow if isinstance(workflow, dict) else {}
         self.unique_id = str(unique_id)
         self.payload = payload
         self.secret_prompt = {
             str(key): value for key, value in payload.get("secret_prompt", {}).items()
         }
+        self.restore_nodes = {
+            str(node.get("id")): node
+            for node in (payload.get("restore_nodes") or [])
+            if node.get("id") is not None
+        }
+        self.restore_link_by_id = {}
+        self.restore_incoming_links = {}
+        for raw_link in payload.get("restore_links") or []:
+            if len(raw_link) < 5:
+                continue
+            self.restore_link_by_id[int(raw_link[0])] = raw_link
+            self.restore_incoming_links[(str(raw_link[3]), int(raw_link[4]))] = raw_link
         self.external_input_map = self._build_external_input_map()
 
     def _build_external_input_map(self):
+        result = {}
+
+        workflow_node = None
+        try:
+            workflow_node = _find_workflow_node(self.workflow, self.unique_id)
+        except Exception:
+            workflow_node = None
+
+        if workflow_node is not None:
+            link_by_id = {}
+            for raw_link in self.workflow.get("links", []):
+                if len(raw_link) < 5:
+                    continue
+                link_by_id[int(raw_link[0])] = raw_link
+
+            for slot_index, input_name in enumerate(PUBLIC_INPUT_NAMES):
+                workflow_inputs = workflow_node.get("inputs", [])
+                if slot_index >= len(workflow_inputs):
+                    break
+                link_id = workflow_inputs[slot_index].get("link")
+                if link_id is None:
+                    continue
+                raw_link = link_by_id.get(int(link_id))
+                if not raw_link or len(raw_link) < 5:
+                    continue
+                result[_link_key([str(raw_link[1]), int(raw_link[2])])] = input_name
+
+        if result:
+            return result
+
         decode_node = self.prompt.get(self.unique_id)
         if decode_node is None:
             raise ValueError(
                 f"WorkflowCipherDecryptNode prompt entry {self.unique_id} was not found."
             )
-        result = {}
         for input_name, input_value in decode_node.get("inputs", {}).items():
             if input_name in PUBLIC_INPUT_NAMES and is_link(input_value):
                 result[_link_key(input_value)] = input_name
         return result
+
+    def _resolve_restore_passthrough(self, node_id, output_index):
+        node = self.restore_nodes.get(str(node_id))
+        if node is None:
+            return None
+
+        linked_inputs = []
+        for slot_index, input_slot in enumerate(node.get("inputs", [])):
+            link_id = input_slot.get("link")
+            raw_link = None
+            if link_id is not None:
+                raw_link = self.restore_link_by_id.get(int(link_id))
+            if raw_link is None:
+                raw_link = self.restore_incoming_links.get((str(node_id), int(slot_index)))
+            if raw_link is not None:
+                linked_inputs.append(raw_link)
+
+        node_type = str(node.get("type") or "")
+        if node_type == "Reroute" and linked_inputs:
+            raw_link = linked_inputs[0]
+            return [str(raw_link[1]), int(raw_link[2])]
+
+        if len(linked_inputs) == 1:
+            raw_link = linked_inputs[0]
+            return [str(raw_link[1]), int(raw_link[2])]
+
+        if not linked_inputs and int(output_index) == 0:
+            widget_values = node.get("widgets_values") or []
+            if len(widget_values) == 1:
+                return widget_values[0]
+
+        return None
 
     def expand(self, runtime_kwargs):
         graph = GraphBuilder()
@@ -751,6 +825,10 @@ class WorkflowCipherRuntime:
                 if source_id not in built_nodes:
                     built_nodes[source_id] = build_node(source_id, self.secret_prompt[source_id])
                 return built_nodes[source_id].out(output_index)
+
+            passthrough_value = self._resolve_restore_passthrough(source_id, output_index)
+            if passthrough_value is not None:
+                return resolve_value(passthrough_value)
 
             external_input_name = self.external_input_map.get(_link_key(normalized))
             if external_input_name:
@@ -927,7 +1005,7 @@ class _WorkflowCipherShellBase:
                 f"Template ID mismatch. Embedded workflow expects '{embedded_template_id}'."
             )
 
-        runtime = WorkflowCipherRuntime(prompt, unique_id, payload)
+        runtime = WorkflowCipherRuntime(prompt, workflow, unique_id, payload)
         return runtime.expand(kwargs)
 
 

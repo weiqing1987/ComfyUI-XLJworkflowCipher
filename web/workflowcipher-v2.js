@@ -2,7 +2,7 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { GroupNodeHandler } from "/extensions/core/groupNode.js";
 
-const BUILD_ID = "2026-03-31-public-release";
+const BUILD_ID = "2026-04-01-portal-session-sso-v2";
 const MODULE_GUARD_KEY = "__xljworkflowcipher_extension_loaded__";
 const VAULT_NODE_TYPE = "WorkflowCipherVaultNode";
 const GROUP_NODE_PREFIX = "workflow/";
@@ -408,13 +408,81 @@ function openBrowserTab(url) {
   return popup;
 }
 
+function buildPortalSessionLoginUrl(config = frontendConfigCache) {
+  const apiBase = normalizedApiBase(config);
+  if (apiBase) {
+    return `${apiBase}/xljworkflowcipher/api/portal-token-login`;
+  }
+  try {
+    const portalUrl = config?.portal_url || DEFAULT_PORTAL_PATH;
+    return new URL("/xljworkflowcipher/api/portal-token-login", portalUrl).toString();
+  } catch (_error) {
+    return "/xljworkflowcipher/api/portal-token-login";
+  }
+}
+
+function buildPortalSessionLoginNavigationUrl(loginUrl, portalUrl, apiToken) {
+  try {
+    const resolvedPortalUrl = new URL(portalUrl, window.location.href);
+    const resolvedLoginUrl = new URL(loginUrl, window.location.href);
+    resolvedLoginUrl.searchParams.set("api_token", apiToken);
+    resolvedLoginUrl.searchParams.set(
+      "next",
+      `${resolvedPortalUrl.pathname}${resolvedPortalUrl.search}`
+    );
+    return resolvedLoginUrl.toString();
+  } catch (_error) {
+    const separator = String(loginUrl).includes("?") ? "&" : "?";
+    return `${loginUrl}${separator}api_token=${encodeURIComponent(apiToken)}&next=${encodeURIComponent(DEFAULT_PORTAL_PATH)}`;
+  }
+}
+
+function withPortalApiToken(url) {
+  const storedToken = getStoredApiToken();
+  if (!storedToken) {
+    return url;
+  }
+  try {
+    const resolved = new URL(url, window.location.href);
+    const hashParams = new URLSearchParams(String(resolved.hash || "").replace(/^#/, ""));
+    hashParams.set("xlj_api_token", storedToken);
+    resolved.hash = hashParams.toString();
+    return resolved.toString();
+  } catch (_error) {
+    const separator = String(url).includes("#") ? "&" : "#";
+    return `${url}${separator}xlj_api_token=${encodeURIComponent(storedToken)}`;
+  }
+}
+
 async function openPortalPage() {
   const fallbackUrl = frontendConfigCache.portal_url || DEFAULT_PORTAL_PATH;
+  const storedToken = getStoredApiToken();
   try {
     const config = await getFrontendConfig();
-    openBrowserTab(config?.portal_url || fallbackUrl);
+    const portalUrl = config?.portal_url || fallbackUrl;
+    if (storedToken) {
+      openBrowserTab(
+        buildPortalSessionLoginNavigationUrl(
+          buildPortalSessionLoginUrl(config),
+          portalUrl,
+          storedToken
+        )
+      );
+      return;
+    }
+    openBrowserTab(withPortalApiToken(portalUrl));
   } catch (_error) {
-    openBrowserTab(fallbackUrl);
+    if (storedToken) {
+      openBrowserTab(
+        buildPortalSessionLoginNavigationUrl(
+          buildPortalSessionLoginUrl(frontendConfigCache),
+          fallbackUrl,
+          storedToken
+        )
+      );
+      return;
+    }
+    openBrowserTab(withPortalApiToken(fallbackUrl));
   }
 }
 
