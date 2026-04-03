@@ -13,7 +13,7 @@ from .crypto_utils import decrypt_payload, encrypt_payload, sanitize_filename
 from .key_store import get_workflow_group_status, validate_access_key
 
 
-MAX_SHELL_PORTS = 16
+MAX_SHELL_PORTS = 32
 PUBLIC_INPUT_NAMES = tuple(f"input_{index}" for index in range(1, MAX_SHELL_PORTS + 1))
 BRIDGE_INPUT_NAMES = tuple(f"value_{index}" for index in range(1, MAX_SHELL_PORTS + 1))
 SHELL_OUTPUT_NAMES = tuple(f"out_{index}" for index in range(1, MAX_SHELL_PORTS + 1))
@@ -178,6 +178,8 @@ class WorkflowCipherSelectionBuilder:
             self.links_by_target[link_record["target"]].append(link_record)
 
     def analyze(self):
+        self._expand_feedback_selection()
+
         for raw_link in self.workflow.get("links", []):
             if len(raw_link) < 5:
                 continue
@@ -231,6 +233,75 @@ class WorkflowCipherSelectionBuilder:
             raise ValueError(
                 "WorkflowCipher could not find executable prompt data for the selected nodes."
             )
+
+    def _walk_descendants(self, start_nodes):
+        visited = set()
+        stack = [int(node_id) for node_id in start_nodes]
+        while stack:
+            node_id = int(stack.pop())
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            for link in self.links_by_source.get(node_id, []):
+                stack.append(int(link["target"]))
+        return visited
+
+    def _walk_ancestors(self, start_nodes):
+        visited = set()
+        stack = [int(node_id) for node_id in start_nodes]
+        while stack:
+            node_id = int(stack.pop())
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            for link in self.links_by_target.get(node_id, []):
+                stack.append(int(link["source"]))
+        return visited
+
+    def _expand_feedback_selection(self):
+        while True:
+            public_inputs = set()
+            public_outputs = set()
+            for raw_links in self.links_by_target.values():
+                for link in raw_links:
+                    source_id = int(link["source"])
+                    target_id = int(link["target"])
+                    if source_id not in self.selected_node_ids and target_id in self.selected_node_ids:
+                        public_inputs.add(source_id)
+            for raw_links in self.links_by_source.values():
+                for link in raw_links:
+                    source_id = int(link["source"])
+                    target_id = int(link["target"])
+                    if source_id in self.selected_node_ids and target_id not in self.selected_node_ids:
+                        public_outputs.add(target_id)
+            if not public_inputs or not public_outputs:
+                return
+
+            feedback_zone = (
+                self._walk_descendants(public_outputs)
+                & self._walk_ancestors(public_inputs)
+            ) - self.selected_node_ids
+            if not feedback_zone:
+                return
+
+            added_control_nodes = [
+                node_id
+                for node_id in sorted(feedback_zone)
+                if self.workflow_nodes.get(node_id, {}).get("type")
+                in {
+                    "WorkflowCipherEncryptNode",
+                    "WorkflowCipherBridgeNode",
+                    "WorkflowCipherDecryptNode",
+                    "WorkflowCipherVaultNode",
+                }
+            ]
+            if added_control_nodes:
+                raise ValueError(
+                    "WorkflowCipher detected a feedback loop through control nodes: "
+                    f"{added_control_nodes}"
+                )
+
+            self.selected_node_ids.update(int(node_id) for node_id in feedback_zone)
 
     def build_secret_payload(self):
         ordered_outputs, _ = _build_shell_node_output_map(self.external_outputs)
