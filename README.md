@@ -68,6 +68,7 @@ Default config shipped with the plugin:
 
 ```env
 XLJWORKFLOWCIPHER_API_BASE=https://cf.xinlingjunai.net
+XLJWORKFLOWCIPHER_PROXY_API_BASE=http://120.24.24.153:8218
 XLJWORKFLOWCIPHER_PORTAL_URL=https://cf.xinlingjunai.net/xljworkflowcipher/portal
 ```
 
