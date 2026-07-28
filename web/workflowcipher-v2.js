@@ -14,7 +14,7 @@ const PASSWORD_WIDGET_NAME = "password";
 const PASSWORD_DISPLAY_LABEL = "\u89e3\u5f00\u52a0\u5bc6";
 const ACCESS_KEY_DISPLAY_LABEL = "\u5bc6\u94a5";
 const ENCRYPT_PASSWORD_LABEL = "\u52a0\u5bc6\u5bc6\u7801";
-const PRODUCT_CODE_LABEL = "\u4ea7\u54c1\u7f16\u7801";
+const PRODUCT_CODE_LABEL = "\u5de5\u4f5c\u6d41\u540d\u79f0";
 const RESTORE_BUTTON_LABEL = "\u5f00\u653e\u8282\u70b9";
 const ENCRYPT_SINGLE_LABEL = `${BRAND_NAME} \u52a0\u5bc6\u6b64\u8282\u70b9`;
 const ENCRYPT_MULTI_LABEL = `${BRAND_NAME} \u52a0\u5bc6\u6240\u9009\u8282\u70b9`;
@@ -226,7 +226,7 @@ function getCachedAccountSummary() {
   const token = getStoredApiToken();
   const username = getStoredApiUsername().trim();
   return {
-    loggedIn: Boolean(token),
+    loggedIn: Boolean(token || username),
     username,
   };
 }
@@ -267,13 +267,9 @@ function rememberAuthPayload(data) {
 }
 
 async function getRemoteAccountSummary(forceRefresh = false) {
-  const token = getStoredApiToken();
-  const storedUsername = getStoredApiUsername();
-  if (!token) {
-    return { loggedIn: false, username: "" };
-  }
-  if (!forceRefresh && storedUsername) {
-    return { loggedIn: true, username: storedUsername };
+  const cached = getCachedAccountSummary();
+  if (!forceRefresh && cached.loggedIn && cached.username) {
+    return cached;
   }
   try {
     const config = await getFrontendConfig();
@@ -281,19 +277,17 @@ async function getRemoteAccountSummary(forceRefresh = false) {
     rememberAuthPayload(payload);
     return {
       loggedIn: true,
-      username: payload?.user?.username || storedUsername || "",
+      username: payload?.user?.username || cached.username || "",
     };
   } catch (_error) {
-    return {
-      loggedIn: Boolean(storedUsername),
-      username: storedUsername,
-    };
+    return cached.loggedIn ? cached : { loggedIn: false, username: "" };
   }
 }
 
 async function remoteLogout() {
   try {
-    if (getStoredApiToken()) {
+    const cached = getCachedAccountSummary();
+    if (cached.loggedIn || cached.username) {
       await requestBackendJson("/xljworkflowcipher/api/logout", {
         method: "POST",
       });
@@ -677,7 +671,6 @@ function promptEncryptionOptions() {
     // Auto-fill remembered key settings from previous decryption
     if (rememberedKeySettings) {
       keyRequiredInput.checked = rememberedKeySettings.keyRequired;
-      keyGroupInput.value = rememberedKeySettings.keyGroup || "";
     }
 
     function cleanup(value) {
@@ -709,12 +702,12 @@ function promptEncryptionOptions() {
     function syncKeyRow() {
       keyRow.style.display = "grid";
       if (keyRequiredInput.checked) {
-        keyGroupInput.placeholder = "例如: grok_video_pro";
-        keyHint.textContent = "启用后必须填写产品编码。用户实际拿到的密钥时长、次数、试用规则和设备策略，都由后台发卡时决定。";
+        keyGroupInput.placeholder = "例如: 电商图像精修工作流";
+        keyHint.textContent = "启用后请填写工作流名称。后台会自动按加密顺序生成 001、002 这样的工作流编号。";
         return;
       }
       keyGroupInput.placeholder = "不启用时可留空";
-      keyHint.textContent = "不启用时可留空。这个字段只用于把加密工作流绑定到后台的某个产品编码。";
+      keyHint.textContent = "不启用时可留空。填写名称后，后台会自动生成工作流编号并绑定密钥。";
     }
 
     // Sync initial state (show key_group input if remembered)
@@ -922,10 +915,10 @@ async function ensureRemoteWorkflowSynced(selectedNodes, options) {
     throw new Error("\u8bf7\u5148\u901a\u8fc7\u672c\u5730\u6388\u6743\u9875\u767b\u5f55\uff0c\u518d\u521b\u5efa\u5e26\u5bc6\u94a5\u6821\u9a8c\u7684\u52a0\u5bc6\u5de5\u4f5c\u6d41\u3002");
   }
 
-  const workflowName = buildNodeTitle(selectedNodes) || options.keyGroup;
+  const workflowName = (options?.keyGroup || "").trim() || buildNodeTitle(selectedNodes);
   const basePayload = {
-    code: options.keyGroup,
-    workflow_code: options.keyGroup,
+    code: "",
+    workflow_code: "",
     name: workflowName,
     workflow_name: workflowName,
     description: `Created from ${BRAND_NAME}`,
@@ -1388,15 +1381,21 @@ promptEncryptionOptions = function () {
 
     function syncKeyHint() {
       if (keyRequiredInput.checked) {
-        keyGroupInput.placeholder = "\u4f8b\u5982: grok_video_pro";
-        keyHint.textContent = "\u542f\u7528\u540e\u5fc5\u987b\u586b\u5199\u4ea7\u54c1\u7f16\u7801\u3002\u7528\u6237\u5b9e\u9645\u62ff\u5230\u7684\u5bc6\u94a5\u65f6\u957f\u3001\u6b21\u6570\u3001\u8bd5\u7528\u89c4\u5219\u548c\u8bbe\u5907\u7b56\u7565\uff0c\u90fd\u7531\u6388\u6743\u540e\u53f0\u53d1\u5361\u65f6\u51b3\u5b9a\u3002";
+        keyGroupInput.placeholder = "\u4f8b\u5982: \u7535\u5546\u56fe\u50cf\u7cbe\u4fee\u5de5\u4f5c\u6d41";
+        keyHint.textContent = "\u542f\u7528\u540e\u8bf7\u586b\u5199\u5de5\u4f5c\u6d41\u540d\u79f0\u3002\u540e\u53f0\u4f1a\u81ea\u52a8\u6309\u987a\u5e8f\u751f\u6210 001\u3001002 \u8fd9\u6837\u7684\u5de5\u4f5c\u6d41\u7f16\u53f7\u3002";
       } else {
         keyGroupInput.placeholder = "\u4e0d\u542f\u7528\u65f6\u53ef\u7559\u7a7a";
-        keyHint.textContent = "\u4e0d\u542f\u7528\u65f6\u53ef\u7559\u7a7a\u3002\u8fd9\u4e2a\u5b57\u6bb5\u53ea\u7528\u4e8e\u628a\u52a0\u5bc6\u5de5\u4f5c\u6d41\u7ed1\u5b9a\u5230\u540e\u53f0\u7684\u67d0\u4e2a\u4ea7\u54c1\u7f16\u7801\u3002";
+        keyHint.textContent = "\u4e0d\u542f\u7528\u65f6\u53ef\u7559\u7a7a\u3002\u586b\u5199\u540d\u79f0\u540e\uff0c\u540e\u53f0\u4f1a\u81ea\u52a8\u751f\u6210\u5de5\u4f5c\u6d41\u7f16\u53f7\u3002";
       }
     }
 
     keyRequiredInput.addEventListener("change", syncKeyHint);
+    keyGroupInput.addEventListener("input", () => {
+      if (keyGroupInput.value?.trim() && !keyRequiredInput.checked) {
+        keyRequiredInput.checked = true;
+        syncKeyHint();
+      }
+    });
     panel.querySelector('[data-action="cancel"]').addEventListener("click", () => cleanup(null));
     panel.querySelector('[data-action="portal-link"]').addEventListener("click", (event) => {
       event.preventDefault();
@@ -1424,8 +1423,8 @@ promptEncryptionOptions = function () {
     panel.addEventListener("submit", (event) => {
       event.preventDefault();
       const passphrase = passphraseInput.value?.trim();
-      const keyRequired = Boolean(keyRequiredInput.checked);
       const keyGroup = keyGroupInput.value?.trim();
+      const keyRequired = Boolean(keyRequiredInput.checked || keyGroup);
 
       if (!passphrase) {
         window.alert("\u8bf7\u5148\u586b\u5199\u52a0\u5bc6\u5bc6\u7801\u3002");
@@ -1622,6 +1621,116 @@ addRestoreMenu = function (node, options) {
   options.push({
     content: RESTORE_LABEL,
     callback: () => requestNodeRestore(node),
+  });
+};
+
+remoteLogin = async function () {
+  const existingAccount = await getRemoteAccountSummary();
+  if (existingAccount.loggedIn) {
+    return existingAccount;
+  }
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "background:rgba(5,9,18,0.72)",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "z-index:999999",
+      "padding:20px",
+    ].join(";");
+
+    const panel = document.createElement("form");
+    panel.style.cssText = [
+      "width:min(380px,100%)",
+      "background:#131a2a",
+      "border:1px solid rgba(255,255,255,0.08)",
+      "border-radius:22px",
+      "padding:22px",
+      "color:#eef3ff",
+      "box-shadow:0 30px 80px rgba(0,0,0,0.45)",
+      "display:grid",
+      "gap:14px",
+    ].join(";");
+
+    panel.innerHTML = `
+      <div>
+        <div style="font-size:13px;color:#71d9cb;letter-spacing:0.12em;text-transform:uppercase;">${BRAND_NAME}</div>
+        <h3 style="margin:8px 0 0;font-size:24px;">\u767b\u5f55\u540e\u53f0</h3>
+        <p style="margin:10px 0 0;color:#9fb0d0;line-height:1.6;">
+          \u4f7f\u7528\u521b\u4f5c\u8005\u540e\u53f0\u8d26\u53f7\u767b\u5f55\uff0c\u5b8c\u6210\u4f1a\u8bdd\u8ba4\u8bc1\u540e\u5373\u53ef\u540c\u6b65\u5de5\u4f5c\u6d41\u548c\u5bc6\u94a5\u7ba1\u7406\u3002
+        </p>
+      </div>
+      <label style="display:grid;gap:8px;">
+        <span style="color:#9fb0d0;font-size:14px;">\u7528\u6237\u540d</span>
+        <input name="username" type="text" autocomplete="username" style="width:100%;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#0d1320;color:#eef3ff;" />
+      </label>
+      <label style="display:grid;gap:8px;">
+        <span style="color:#9fb0d0;font-size:14px;">\u5bc6\u7801</span>
+        <input name="password" type="password" autocomplete="current-password" style="width:100%;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#0d1320;color:#eef3ff;" />
+      </label>
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button type="button" data-action="cancel" style="padding:11px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:#eef3ff;">\u53d6\u6d88</button>
+        <button type="submit" style="padding:11px 16px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#4ec7b9;color:#082420;font-weight:700;">\u767b\u5f55</button>
+      </div>
+    `;
+
+    const usernameInput = panel.querySelector('input[name="username"]');
+    const passwordInput = panel.querySelector('input[name="password"]');
+
+    function cleanup(value) {
+      overlay.remove();
+      resolve(value);
+    }
+
+    panel.querySelector('[data-action="cancel"]').addEventListener("click", () => cleanup(null));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        cleanup(null);
+      }
+    });
+
+    panel.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const username = usernameInput.value?.trim();
+      const password = passwordInput.value?.trim();
+
+      if (!username || !password) {
+        window.alert("\u8bf7\u8f93\u5165\u7528\u6237\u540d\u548c\u5bc6\u7801\u3002");
+        return;
+      }
+
+      try {
+        const config = await getFrontendConfig();
+        const apiBase = normalizedApiBase(config);
+        if (!apiBase) {
+          throw new Error("\u672a\u914d\u7f6e\u8fdc\u7a0b\u540e\u53f0\u5730\u5740\uff0c\u8bf7\u5148\u5728 service.env \u4e2d\u8bbe\u7f6e XLJWORKFLOWCIPHER_API_BASE\u3002");
+        }
+
+        const data = await requestRemoteJson(`${apiBase}/xljworkflowcipher/api/login`, {
+          method: "POST",
+          body: JSON.stringify({ username, password }),
+        });
+        rememberAuthPayload(data);
+
+        const account = await getRemoteAccountSummary(true).catch(() => ({
+          loggedIn: true,
+          username: data?.user?.username || username,
+        }));
+
+        window.alert("\u767b\u5f55\u6210\u529f\uff0c\u5df2\u8fde\u63a5\u8fdc\u7a0b\u540e\u53f0\u3002");
+        cleanup(account);
+      } catch (error) {
+        window.alert(`\u767b\u5f55\u5931\u8d25: ${error.message}`);
+      }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    usernameInput.focus();
   });
 };
 

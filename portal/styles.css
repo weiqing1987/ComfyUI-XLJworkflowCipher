@@ -27,7 +27,7 @@ body {
 }
 
 .page {
-  width: min(1120px, calc(100vw - 32px));
+  width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 32px 0 48px;
 }
@@ -71,12 +71,12 @@ h1 {
 .summary {
   margin-top: 10px;
   color: var(--muted);
-  max-width: 580px;
+  max-width: 620px;
   line-height: 1.6;
 }
 
 .status {
-  min-width: 220px;
+  min-width: 240px;
   padding: 16px 18px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
@@ -86,10 +86,6 @@ h1 {
 
 .panel {
   padding: 24px;
-}
-
-.panel + .panel {
-  margin-top: 24px;
 }
 
 .panel-head {
@@ -102,7 +98,11 @@ h1 {
   color: var(--muted);
 }
 
-.split {
+.split,
+.list-head,
+.keys-head,
+.group-header,
+.pagination {
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -111,14 +111,55 @@ h1 {
 
 .form-grid,
 .workflow-form,
-.group-actions {
+.group-actions,
+.groups-list,
+.keys-table {
   display: grid;
   gap: 14px;
 }
 
 .workflow-form {
-  grid-template-columns: 1.3fr 1fr auto;
+  grid-template-columns: minmax(260px, 1fr) auto;
   align-items: end;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stats-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stat-card {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border-radius: 20px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+}
+
+.stat-card-link a {
+  color: inherit;
+  text-decoration: none;
+  display: grid;
+  gap: 8px;
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stat-value {
+  font-size: 32px;
+  line-height: 1;
 }
 
 label {
@@ -130,7 +171,8 @@ label {
 
 input,
 select,
-button {
+button,
+.ghost-link {
   border-radius: 14px;
   border: 1px solid var(--border);
   font: inherit;
@@ -144,19 +186,31 @@ select {
   color: var(--text);
 }
 
-button {
+button,
+.ghost-link {
   cursor: pointer;
   padding: 13px 16px;
   background: var(--accent);
   color: #082420;
   font-weight: 700;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-button:hover {
+button:hover,
+.ghost-link:hover {
   background: var(--accent-strong);
 }
 
-button.ghost {
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.ghost,
+.ghost-link {
   background: transparent;
   color: var(--text);
 }
@@ -169,25 +223,34 @@ button.danger {
 .button-row {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .hidden {
-  display: none;
-}
-
-.list-head,
-.keys-head,
-.group-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
+  display: none !important;
 }
 
 .groups-list {
-  display: grid;
-  gap: 18px;
   margin-top: 18px;
+}
+
+.password-panel {
+  margin-top: 28px;
+  padding: 20px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--border);
+}
+
+.password-form {
+  display: grid;
+  gap: 14px;
+}
+
+.password-input {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
 }
 
 .group-card {
@@ -197,10 +260,16 @@ button.danger {
   border: 1px solid var(--border);
 }
 
-.group-actions {
-  grid-template-columns: minmax(160px, 220px) repeat(3, auto);
+.group-actions.active-actions {
+  grid-template-columns: minmax(150px, 200px) repeat(3, auto);
   margin: 18px 0;
   align-items: end;
+}
+
+.group-actions.recycle-actions {
+  grid-template-columns: 1fr auto auto;
+  margin: 18px 0;
+  align-items: center;
 }
 
 .keys-wrap {
@@ -213,19 +282,26 @@ button.danger {
   margin-bottom: 12px;
 }
 
-.keys-table {
+.keys-head > div {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
 .key-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) 120px 160px auto;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(220px, 1.3fr) 110px 150px auto;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.key-note-editor {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .key-actions {
@@ -262,14 +338,23 @@ button.danger {
   color: #ffd0d5;
 }
 
-@media (max-width: 900px) {
+.pagination {
+  margin-top: 18px;
+  justify-content: center;
+}
+
+@media (max-width: 980px) {
   .hero,
   .split,
   .workflow-form,
-  .group-actions,
-  .key-row {
-    grid-template-columns: 1fr;
+  .stats-grid,
+  .group-actions.active-actions,
+  .group-actions.recycle-actions,
+  .key-row,
+  .key-note-editor,
+  .password-input {
     display: grid;
+    grid-template-columns: 1fr;
   }
 
   .hero {
@@ -280,7 +365,8 @@ button.danger {
     min-width: 0;
   }
 
-  .button-row {
+  .button-row,
+  .key-actions {
     flex-direction: column;
   }
 }

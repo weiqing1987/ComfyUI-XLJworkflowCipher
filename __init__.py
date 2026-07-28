@@ -5,9 +5,11 @@ import server
 from aiohttp import ClientSession, ClientTimeout, web
 
 from .key_store import (
+    change_user_password,
     KeyStoreError,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE_SECONDS,
+    delete_workflow_group_forever,
     destroy_workflow_group,
     delete_workflow_key,
     disable_workflow_group,
@@ -19,7 +21,9 @@ from .key_store import (
     logout_user,
     register_user,
     list_workflow_groups,
+    restore_workflow_group,
     upsert_workflow_group,
+    update_workflow_key_note,
     validate_access_key,
 )
 from .workflow_cipher import (
@@ -171,6 +175,33 @@ def _frontend_config_payload():
     }
 
 
+def _requested_key_count(payload):
+    try:
+        count = int(payload.get("key_count", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(count, 20))
+
+
+def _requested_expiry_mode(payload):
+    raw_mode = (payload.get("expiry_mode") or "").strip().lower()
+    if raw_mode:
+        return raw_mode
+
+    try:
+        validity_days = int(payload.get("key_validity_days", 0) or 0)
+    except (TypeError, ValueError):
+        validity_days = 0
+
+    if validity_days >= 30:
+        return "month"
+    if validity_days >= 7:
+        return "week"
+    if validity_days >= 1:
+        return "day"
+    return "unlimited"
+
+
 async def _encrypt_selection_response(request):
     json_data = await request.json()
     return encrypt_selection_to_shell_workflow(
@@ -261,6 +292,25 @@ async def xljworkflowcipher_logout(request):
         return _error_response(exc, status=500)
 
 
+@server.PromptServer.instance.routes.post("/xljworkflowcipher/api/change-password")
+async def xljworkflowcipher_change_password(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(request, "/xljworkflowcipher/api/change-password")
+    try:
+        user, _token = _authenticated_user(request)
+        json_data = await request.json()
+        updated_user = change_user_password(
+            user["id"],
+            json_data.get("current_password", ""),
+            json_data.get("new_password", ""),
+        )
+        return web.json_response({"user": updated_user, "ok": True})
+    except KeyStoreError as exc:
+        return _error_response(exc, status=400)
+    except Exception as exc:
+        return _error_response(exc, status=500)
+
+
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/api/me")
 async def xljworkflowcipher_me(request):
     if _remote_enabled():
@@ -300,7 +350,24 @@ async def xljworkflowcipher_upsert_workflow(request):
             json_data.get("code", ""),
             json_data.get("name", ""),
         )
-        return web.json_response({"group": group})
+        generated_keys = []
+        key_count = _requested_key_count(json_data)
+        expiry_mode = _requested_expiry_mode(json_data)
+        note = json_data.get("note", "")
+        for _ in range(key_count):
+            generated_keys.append(
+                generate_workflow_key(user["id"], int(group["id"]), expiry_mode, note)
+            )
+        if generated_keys:
+            group = next(
+                (
+                    item
+                    for item in list_workflow_groups(user["id"])
+                    if int(item["id"]) == int(group["id"])
+                ),
+                group,
+            )
+        return web.json_response({"group": group, "keys": generated_keys})
     except KeyStoreError as exc:
         return _error_response(exc, status=400)
     except Exception as exc:
@@ -321,6 +388,7 @@ async def xljworkflowcipher_generate_key(request):
             user["id"],
             int(request.match_info["group_id"]),
             json_data.get("expiry_mode", "unlimited"),
+            json_data.get("note", ""),
         )
         return web.json_response({"key": key_data})
     except KeyStoreError as exc:
@@ -344,6 +412,29 @@ async def xljworkflowcipher_delete_key(request):
             int(request.match_info["key_id"]),
         )
         return web.json_response({"group": group})
+    except KeyStoreError as exc:
+        return _error_response(exc, status=400)
+    except Exception as exc:
+        return _error_response(exc, status=500)
+
+
+@server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/keys/{key_id}/note")
+async def xljworkflowcipher_update_key_note(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/keys/{request.match_info['key_id']}/note",
+        )
+    try:
+        user, _token = _authenticated_user(request)
+        json_data = await request.json()
+        key_data = update_workflow_key_note(
+            user["id"],
+            int(request.match_info["group_id"]),
+            int(request.match_info["key_id"]),
+            json_data.get("note", ""),
+        )
+        return web.json_response({"key": key_data})
     except KeyStoreError as exc:
         return _error_response(exc, status=400)
     except Exception as exc:
@@ -378,6 +469,40 @@ async def xljworkflowcipher_destroy_group(request):
         user, _token = _authenticated_user(request)
         group = destroy_workflow_group(user["id"], int(request.match_info["group_id"]))
         return web.json_response({"group": group})
+    except KeyStoreError as exc:
+        return _error_response(exc, status=400)
+    except Exception as exc:
+        return _error_response(exc, status=500)
+
+
+@server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/restore")
+async def xljworkflowcipher_restore_group(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/restore",
+        )
+    try:
+        user, _token = _authenticated_user(request)
+        group = restore_workflow_group(user["id"], int(request.match_info["group_id"]))
+        return web.json_response({"group": group})
+    except KeyStoreError as exc:
+        return _error_response(exc, status=400)
+    except Exception as exc:
+        return _error_response(exc, status=500)
+
+
+@server.PromptServer.instance.routes.post("/xljworkflowcipher/api/workflows/{group_id}/delete")
+async def xljworkflowcipher_delete_group_forever(request):
+    if _remote_enabled():
+        return await _proxy_remote_api(
+            request,
+            f"/xljworkflowcipher/api/workflows/{request.match_info['group_id']}/delete",
+        )
+    try:
+        user, _token = _authenticated_user(request)
+        delete_workflow_group_forever(user["id"], int(request.match_info["group_id"]))
+        return web.json_response({"ok": True})
     except KeyStoreError as exc:
         return _error_response(exc, status=400)
     except Exception as exc:
@@ -424,6 +549,22 @@ async def xljworkflowcipher_portal(request):
     if portal_url.startswith(("http://", "https://")):
         raise web.HTTPFound(portal_url)
     return web.FileResponse(PORTAL_DIR / "index.html")
+
+
+@server.PromptServer.instance.routes.get("/xljworkflowcipher/portal/recycle")
+async def xljworkflowcipher_portal_recycle(request):
+    portal_url = _frontend_config_payload()["portal_url"]
+    if portal_url.startswith(("http://", "https://")):
+        raise web.HTTPFound(f"{portal_url.rstrip('/')}/recycle")
+    return web.FileResponse(PORTAL_DIR / "recycle.html")
+
+
+@server.PromptServer.instance.routes.get("/xljworkflowcipher/portal/expiring")
+async def xljworkflowcipher_portal_expiring(request):
+    portal_url = _frontend_config_payload()["portal_url"]
+    if portal_url.startswith(("http://", "https://")):
+        raise web.HTTPFound(f"{portal_url.rstrip('/')}/expiring")
+    return web.FileResponse(PORTAL_DIR / "expiring.html")
 
 
 @server.PromptServer.instance.routes.get("/xljworkflowcipher/portal/styles.css")

@@ -19,6 +19,8 @@ SESSION_COOKIE_NAME = "xljworkflowcipher_session"
 SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 PASSWORD_ITERATIONS = 200000
 REMOTE_TIMEOUT_SECONDS = 15
+RECYCLE_RETENTION_DAYS = 7
+WORKFLOW_CODE_WIDTH = 3
 EXPIRY_MODES = {
     "day": timedelta(days=1),
     "week": timedelta(days=7),
@@ -153,6 +155,7 @@ def _connect() -> sqlite3.Connection:
     connection.execute("PRAGMA foreign_keys = ON")
     _ensure_schema(connection)
     _cleanup_expired_sessions(connection)
+    _cleanup_recycled_groups(connection)
     return connection
 
 
@@ -198,6 +201,14 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         );
         """
     )
+    key_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(workflow_keys)").fetchall()
+    }
+    if "note" not in key_columns:
+        connection.execute(
+            "ALTER TABLE workflow_keys ADD COLUMN note TEXT NOT NULL DEFAULT ''"
+        )
     connection.commit()
 
 
@@ -205,6 +216,20 @@ def _cleanup_expired_sessions(connection: sqlite3.Connection) -> None:
     connection.execute(
         "DELETE FROM sessions WHERE expires_at <= ?",
         (_isoformat(_utcnow()),),
+    )
+    connection.commit()
+
+
+def _cleanup_recycled_groups(connection: sqlite3.Connection) -> None:
+    cutoff = _isoformat(_utcnow() - timedelta(days=RECYCLE_RETENTION_DAYS))
+    connection.execute(
+        """
+        DELETE FROM workflow_groups
+        WHERE status = 'destroyed'
+          AND destroyed_at IS NOT NULL
+          AND destroyed_at <= ?
+        """,
+        (cutoff,),
     )
     connection.commit()
 
@@ -238,6 +263,7 @@ def _serialize_key(row: sqlite3.Row) -> dict:
     return {
         "id": int(row["id"]),
         "access_key": row["access_key"],
+        "note": row["note"] or "",
         "status": row["status"],
         "expiry_mode": row["expiry_mode"],
         "expires_at": row["expires_at"],
@@ -247,6 +273,14 @@ def _serialize_key(row: sqlite3.Row) -> dict:
 
 
 def _serialize_group(row: sqlite3.Row) -> dict:
+    destroyed_at = row["destroyed_at"]
+    recoverable_until = None
+    if destroyed_at:
+        destroyed_dt = _parse_datetime(destroyed_at)
+        if destroyed_dt is not None:
+            recoverable_until = _isoformat(
+                destroyed_dt + timedelta(days=RECYCLE_RETENTION_DAYS)
+            )
     return {
         "id": int(row["id"]),
         "code": row["code"],
@@ -255,9 +289,24 @@ def _serialize_group(row: sqlite3.Row) -> dict:
         "key_required": bool(row["key_required"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
-        "destroyed_at": row["destroyed_at"],
+        "destroyed_at": destroyed_at,
+        "recoverable_until": recoverable_until,
         "keys": [],
     }
+
+
+def _next_workflow_code(connection: sqlite3.Connection, user_id: int) -> str:
+    rows = connection.execute(
+        "SELECT code FROM workflow_groups WHERE user_id = ?",
+        (int(user_id),),
+    ).fetchall()
+    next_value = 1
+    for row in rows:
+        code = str(row["code"] or "").strip()
+        if not code.isdigit():
+            continue
+        next_value = max(next_value, int(code) + 1)
+    return f"{next_value:0{WORKFLOW_CODE_WIDTH}d}"
 
 
 def _load_group_with_keys(connection: sqlite3.Connection, group_id: int) -> dict:
@@ -274,6 +323,7 @@ def _load_group_with_keys(connection: sqlite3.Connection, group_id: int) -> dict
         SELECT *
         FROM workflow_keys
         WHERE workflow_group_id = ?
+          AND status = 'active'
         ORDER BY created_at DESC
         """,
         (int(group_id),),
@@ -347,6 +397,43 @@ def login_user(username: str, password: str) -> tuple[str, dict]:
         return token, _serialize_user(row)
 
 
+def change_user_password(user_id: int, current_password: str, new_password: str) -> dict:
+    current_password = current_password or ""
+    new_password = new_password or ""
+    if len(new_password) < 6:
+        raise KeyStoreError("New password must be at least 6 characters.")
+
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (int(user_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyStoreError("User does not exist.")
+
+        expected_hash = row["password_hash"]
+        actual_hash = _hash_password(current_password, row["password_salt"])
+        if not hmac.compare_digest(expected_hash, actual_hash):
+            raise KeyStoreError("Current password is incorrect.")
+
+        new_salt = secrets.token_hex(16)
+        new_hash = _hash_password(new_password, new_salt)
+        connection.execute(
+            """
+            UPDATE users
+            SET password_salt = ?, password_hash = ?
+            WHERE id = ?
+            """,
+            (new_salt, new_hash, int(user_id)),
+        )
+        connection.commit()
+        updated = connection.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (int(user_id),),
+        ).fetchone()
+        return _serialize_user(updated)
+
+
 def logout_user(session_token: str) -> None:
     if not session_token:
         return
@@ -375,12 +462,19 @@ def get_user_by_session(session_token: str) -> dict | None:
 
 def upsert_workflow_group(user_id: int, code: str, name: str) -> dict:
     code = (code or "").strip()
-    name = (name or "").strip() or code
-    if len(code) < 3:
-        raise KeyStoreError("Workflow code must be at least 3 characters.")
+    name = (name or "").strip()
 
     now = _isoformat(_utcnow())
     with _connect() as connection:
+        if not code:
+            if not name:
+                raise KeyStoreError("Workflow name is required.")
+            code = _next_workflow_code(connection, user_id)
+        if not name:
+            name = code
+        if len(code) < 3:
+            raise KeyStoreError("Workflow code must be at least 3 characters.")
+
         existing = connection.execute(
             "SELECT * FROM workflow_groups WHERE code = ? COLLATE NOCASE",
             (code,),
@@ -458,9 +552,12 @@ def _resolve_expiry(expiry_mode: str) -> tuple[str, str | None]:
     return expiry_mode, expires_at
 
 
-def generate_workflow_key(user_id: int, group_id: int, expiry_mode: str) -> dict:
+def generate_workflow_key(
+    user_id: int, group_id: int, expiry_mode: str, note: str = ""
+) -> dict:
     expiry_mode, expires_at = _resolve_expiry(expiry_mode)
     now = _isoformat(_utcnow())
+    note = (note or "").strip()
 
     with _connect() as connection:
         group_row = connection.execute(
@@ -476,11 +573,11 @@ def generate_workflow_key(user_id: int, group_id: int, expiry_mode: str) -> dict
         connection.execute(
             """
             INSERT INTO workflow_keys (
-                workflow_group_id, access_key, status, expiry_mode, expires_at, created_at, updated_at
+                workflow_group_id, access_key, note, status, expiry_mode, expires_at, created_at, updated_at
             )
-            VALUES (?, ?, 'active', ?, ?, ?, ?)
+            VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
             """,
-            (int(group_id), access_key, expiry_mode, expires_at, now, now),
+            (int(group_id), access_key, note, expiry_mode, expires_at, now, now),
         )
         connection.commit()
         row = connection.execute(
@@ -491,6 +588,7 @@ def generate_workflow_key(user_id: int, group_id: int, expiry_mode: str) -> dict
 
 
 def delete_workflow_key(user_id: int, group_id: int, key_id: int) -> dict:
+    now = _isoformat(_utcnow())
     with _connect() as connection:
         group_row = connection.execute(
             "SELECT * FROM workflow_groups WHERE id = ? AND user_id = ?",
@@ -512,11 +610,54 @@ def delete_workflow_key(user_id: int, group_id: int, key_id: int) -> dict:
             raise KeyStoreError("Workflow key does not exist.")
 
         connection.execute(
-            "DELETE FROM workflow_keys WHERE id = ?",
-            (int(key_id),),
+            """
+            UPDATE workflow_keys
+            SET status = 'disabled', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, int(key_id)),
         )
         connection.commit()
         return _load_group_with_keys(connection, int(group_id))
+
+
+def update_workflow_key_note(user_id: int, group_id: int, key_id: int, note: str) -> dict:
+    now = _isoformat(_utcnow())
+    note = (note or "").strip()
+    with _connect() as connection:
+        group_row = connection.execute(
+            "SELECT * FROM workflow_groups WHERE id = ? AND user_id = ?",
+            (int(group_id), int(user_id)),
+        ).fetchone()
+        if group_row is None:
+            raise KeyStoreError("Workflow group does not exist.")
+
+        key_row = connection.execute(
+            """
+            SELECT *
+            FROM workflow_keys
+            WHERE id = ?
+              AND workflow_group_id = ?
+            """,
+            (int(key_id), int(group_id)),
+        ).fetchone()
+        if key_row is None:
+            raise KeyStoreError("Workflow key does not exist.")
+
+        connection.execute(
+            """
+            UPDATE workflow_keys
+            SET note = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (note, now, int(key_id)),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM workflow_keys WHERE id = ?",
+            (int(key_id),),
+        ).fetchone()
+        return _serialize_key(row)
 
 
 def disable_workflow_group(user_id: int, group_id: int) -> dict:
@@ -579,6 +720,63 @@ def destroy_workflow_group(user_id: int, group_id: int) -> dict:
         )
         connection.commit()
         return _load_group_with_keys(connection, int(group_id))
+
+
+def restore_workflow_group(user_id: int, group_id: int) -> dict:
+    now = _isoformat(_utcnow())
+    with _connect() as connection:
+        group_row = connection.execute(
+            "SELECT * FROM workflow_groups WHERE id = ? AND user_id = ?",
+            (int(group_id), int(user_id)),
+        ).fetchone()
+        if group_row is None:
+            raise KeyStoreError("Workflow group does not exist.")
+        if group_row["status"] != "destroyed":
+            raise KeyStoreError("Only recycled workflow groups can be restored.")
+
+        destroyed_at = _parse_datetime(group_row["destroyed_at"])
+        if destroyed_at is None:
+            raise KeyStoreError("Recycle timestamp is missing.")
+        if destroyed_at + timedelta(days=RECYCLE_RETENTION_DAYS) <= _utcnow():
+            raise KeyStoreError("Recycle bin retention has expired.")
+
+        connection.execute(
+            """
+            UPDATE workflow_groups
+            SET status = 'active', updated_at = ?, destroyed_at = NULL
+            WHERE id = ?
+            """,
+            (now, int(group_id)),
+        )
+        connection.execute(
+            """
+            UPDATE workflow_keys
+            SET status = 'active', updated_at = ?
+            WHERE workflow_group_id = ?
+              AND status IN ('disabled', 'destroyed')
+            """,
+            (now, int(group_id)),
+        )
+        connection.commit()
+        return _load_group_with_keys(connection, int(group_id))
+
+
+def delete_workflow_group_forever(user_id: int, group_id: int) -> None:
+    with _connect() as connection:
+        group_row = connection.execute(
+            "SELECT * FROM workflow_groups WHERE id = ? AND user_id = ?",
+            (int(group_id), int(user_id)),
+        ).fetchone()
+        if group_row is None:
+            raise KeyStoreError("Workflow group does not exist.")
+        if group_row["status"] != "destroyed":
+            raise KeyStoreError("Please move the workflow group to recycle bin first.")
+
+        connection.execute(
+            "DELETE FROM workflow_groups WHERE id = ?",
+            (int(group_id),),
+        )
+        connection.commit()
 
 
 def get_workflow_group_status(code: str) -> dict:

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XLJworkflowCipher Recycle Bin</title>
+    <link rel="stylesheet" href="/xljworkflowcipher/portal/styles.css" />
+  </head>
+  <body data-page="recycle">
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">XLJworkflowCipher</p>
+          <h1>Recycle Bin</h1>
+          <p class="summary">已销毁工作流会在这里保留 7 天，超时后系统会自动清理。</p>
+        </div>
+        <div class="status" id="status">正在初始化...</div>
+      </section>
+
+      <section class="panel auth-panel" id="authPanel">
+        <div class="panel-head">
+          <h2>注册 / 登录</h2>
+          <p>先登录后台账号，再管理回收站。</p>
+        </div>
+        <form id="authForm" class="form-grid">
+          <label>
+            <span>用户名</span>
+            <input id="username" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <div class="button-row">
+            <button type="submit">登录</button>
+            <button type="button" class="ghost" id="registerButton">注册并登录</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel dashboard hidden" id="dashboard">
+        <div class="panel-head split">
+          <div>
+            <h2>回收站</h2>
+            <p id="welcomeText"></p>
+          </div>
+          <div class="button-row">
+            <a class="portal-link ghost-link" href="/xljworkflowcipher/portal" target="_self">返回工作流列表</a>
+            <button type="button" class="ghost" id="logoutButton">退出登录</button>
+          </div>
+        </div>
+
+        <div class="list-head">
+          <h3>已销毁工作流</h3>
+          <button type="button" class="ghost" id="refreshButton">刷新</button>
+        </div>
+        <div id="recycleList" class="groups-list recycle-list"></div>
+      </section>
+    </main>
+
+    <template id="groupTemplate">
+      <article class="group-card">
+        <header class="group-header">
+          <div>
+            <h3 class="group-name"></h3>
+            <p class="group-code"></p>
+          </div>
+          <span class="pill group-status"></span>
+        </header>
+
+        <div class="group-actions recycle-actions">
+          <div class="hint recycle-deadline"></div>
+          <button type="button" class="ghost restore-group">恢复</button>
+          <button type="button" class="danger delete-group">彻底删除</button>
+        </div>
+
+        <div class="keys-wrap">
+          <div class="keys-head">
+            <div>
+              <span>密钥列表</span>
+              <span class="hint key-summary"></span>
+            </div>
+            <button type="button" class="ghost toggle-keys">展开</button>
+          </div>
+          <div class="keys-table hidden"></div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="/xljworkflowcipher/portal/app.js"></script>
+  </body>
+</html>

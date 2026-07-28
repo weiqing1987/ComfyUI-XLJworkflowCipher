@@ -6,15 +6,13 @@
     <title>XLJworkflowCipher Key Portal</title>
     <link rel="stylesheet" href="/xljworkflowcipher/portal/styles.css" />
   </head>
-  <body>
+  <body data-page="main">
     <main class="page">
       <section class="hero">
         <div>
           <p class="eyebrow">XLJworkflowCipher</p>
           <h1>Workflow Key Portal</h1>
-          <p class="summary">
-            为加密工作流创建分组、生成密钥、停用或销毁授权。
-          </p>
+          <p class="summary">不获取工作流，核心加密，守护你的核心技术。</p>
         </div>
         <div class="status" id="status">正在初始化...</div>
       </section>
@@ -22,7 +20,7 @@
       <section class="panel auth-panel" id="authPanel">
         <div class="panel-head">
           <h2>注册 / 登录</h2>
-          <p>开发者先登录，再管理密钥组。</p>
+          <p>先登录后台账号，再管理工作流和密钥。</p>
         </div>
         <form id="authForm" class="form-grid">
           <label>
@@ -34,7 +32,7 @@
             <input id="password" name="password" type="password" autocomplete="current-password" required />
           </label>
           <div class="button-row">
-            <button type="submit" data-mode="login">登录</button>
+            <button type="submit">登录</button>
             <button type="button" class="ghost" id="registerButton">注册并登录</button>
           </div>
         </form>
@@ -43,29 +41,72 @@
       <section class="panel dashboard hidden" id="dashboard">
         <div class="panel-head split">
           <div>
-            <h2>工作流密钥组</h2>
+            <h2>用户数据</h2>
             <p id="welcomeText"></p>
           </div>
-          <button type="button" class="ghost" id="logoutButton">退出登录</button>
+          <div class="button-row">
+            <a class="ghost-link" href="/xljworkflowcipher/portal/recycle" target="_self">回收站</a>
+            <a class="ghost-link" href="/xljworkflowcipher/portal/expiring" target="_self">即将到期密钥</a>
+            <button type="button" class="ghost" id="passwordToggleButton">修改密码</button>
+            <button type="button" class="ghost" id="logoutButton">退出登录</button>
+          </div>
         </div>
 
-        <form id="workflowForm" class="workflow-form">
-          <label>
-            <span>工作流编号 / 名称</span>
-            <input id="workflowCode" name="code" placeholder="例如: grok_video_pro" required />
-          </label>
-          <label>
-            <span>显示名称</span>
-            <input id="workflowName" name="name" placeholder="例如: Grok 图生视频 Pro" />
-          </label>
-          <button type="submit">保存工作流密钥组</button>
-        </form>
+        <div class="stats-grid stats-grid-two">
+          <article class="stat-card">
+            <span class="stat-label">加密工作流</span>
+            <strong class="stat-value" id="workflowCount">0</strong>
+            <span class="hint">当前账号下的有效工作流数量</span>
+          </article>
+          <article class="stat-card stat-card-link">
+            <a href="/xljworkflowcipher/portal/expiring" target="_self">
+              <span class="stat-label">1 天内到期密钥</span>
+              <strong class="stat-value" id="expiringCount">0</strong>
+              <span class="hint">点击查看 24 小时内到期的密钥</span>
+            </a>
+          </article>
+        </div>
+
+        <section class="password-panel hidden" id="passwordPanel">
+          <div class="panel-head split">
+            <div>
+              <h3>修改密码</h3>
+              <p>请输入原密码和新密码。新密码至少 6 位。</p>
+            </div>
+            <button type="button" class="ghost" id="passwordCloseButton">收起</button>
+          </div>
+          <form id="passwordForm" class="password-form">
+            <label>
+              <span>原密码</span>
+              <div class="password-input">
+                <input id="currentPassword" name="current_password" type="password" autocomplete="current-password" required />
+                <button type="button" class="ghost toggle-visibility" data-target="currentPassword">显示</button>
+              </div>
+            </label>
+            <label>
+              <span>新密码</span>
+              <div class="password-input">
+                <input id="newPassword" name="new_password" type="password" autocomplete="new-password" required />
+                <button type="button" class="ghost toggle-visibility" data-target="newPassword">显示</button>
+              </div>
+            </label>
+            <label>
+              <span>确认新密码</span>
+              <div class="password-input">
+                <input id="confirmPassword" name="confirm_password" type="password" autocomplete="new-password" required />
+                <button type="button" class="ghost toggle-visibility" data-target="confirmPassword">显示</button>
+              </div>
+            </label>
+            <button type="submit">保存新密码</button>
+          </form>
+        </section>
 
         <div class="list-head">
-          <h3>已保存工作流</h3>
+          <h3>加密工作流列表</h3>
           <button type="button" class="ghost" id="refreshButton">刷新</button>
         </div>
         <div id="groupsList" class="groups-list"></div>
+        <div id="groupsPagination" class="pagination"></div>
       </section>
     </main>
 
@@ -78,7 +119,8 @@
           </div>
           <span class="pill group-status"></span>
         </header>
-        <div class="group-actions">
+
+        <div class="group-actions active-actions">
           <label>
             <span>有效期</span>
             <select class="expiry-select">
@@ -92,12 +134,22 @@
           <button type="button" class="ghost disable-group">停用</button>
           <button type="button" class="danger destroy-group">销毁</button>
         </div>
+
+        <div class="group-actions recycle-actions hidden">
+          <div class="hint recycle-deadline"></div>
+          <button type="button" class="ghost restore-group">恢复</button>
+          <button type="button" class="danger delete-group">彻底删除</button>
+        </div>
+
         <div class="keys-wrap">
           <div class="keys-head">
-            <span>密钥列表</span>
-            <span class="hint">销毁后，工作流会自动解除密钥校验。</span>
+            <div>
+              <span>密钥列表</span>
+              <span class="hint key-summary"></span>
+            </div>
+            <button type="button" class="ghost toggle-keys">展开</button>
           </div>
-          <div class="keys-table"></div>
+          <div class="keys-table hidden"></div>
         </div>
       </article>
     </template>

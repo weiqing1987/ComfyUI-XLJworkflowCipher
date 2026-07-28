@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XLJworkflowCipher Expiring Keys</title>
+    <link rel="stylesheet" href="/xljworkflowcipher/portal/styles.css" />
+  </head>
+  <body data-page="expiring">
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">XLJworkflowCipher</p>
+          <h1>Expiring Keys</h1>
+          <p class="summary">这里列出未来 24 小时内到期的密钥。</p>
+        </div>
+        <div class="status" id="status">正在初始化...</div>
+      </section>
+
+      <section class="panel auth-panel" id="authPanel">
+        <div class="panel-head">
+          <h2>注册 / 登录</h2>
+          <p>先登录后台账号，再查看即将到期的密钥。</p>
+        </div>
+        <form id="authForm" class="form-grid">
+          <label>
+            <span>用户名</span>
+            <input id="username" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <div class="button-row">
+            <button type="submit">登录</button>
+            <button type="button" class="ghost" id="registerButton">注册并登录</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel dashboard hidden" id="dashboard">
+        <div class="panel-head split">
+          <div>
+            <h2>1 天内到期密钥</h2>
+            <p id="welcomeText"></p>
+          </div>
+          <div class="button-row">
+            <a class="ghost-link" href="/xljworkflowcipher/portal" target="_self">返回首页</a>
+            <button type="button" class="ghost" id="logoutButton">退出登录</button>
+          </div>
+        </div>
+
+        <div class="list-head">
+          <h3>到期密钥列表</h3>
+          <button type="button" class="ghost" id="refreshButton">刷新</button>
+        </div>
+        <div id="expiringList" class="groups-list"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/xljworkflowcipher/portal/app.js"></script>
+  </body>
+</html>
