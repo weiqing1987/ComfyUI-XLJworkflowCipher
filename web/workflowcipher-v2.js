@@ -2,7 +2,7 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { GroupNodeHandler } from "/extensions/core/groupNode.js";
 
-const BUILD_ID = "2026-04-01-portal-session-sso-v2";
+const BUILD_ID = "2026-07-28-vault-panel-redesign";
 const MODULE_GUARD_KEY = "__xljworkflowcipher_extension_loaded__";
 const VAULT_NODE_TYPE = "WorkflowCipherVaultNode";
 const GROUP_NODE_PREFIX = "workflow/";
@@ -11,8 +11,9 @@ const BRAND_NAME = "XLJworkflowCipher";
 const VAULT_TITLE = "ComfyUI-XLJworkflowCipher";
 const ACCESS_KEY_WIDGET = "access_key";
 const PASSWORD_WIDGET_NAME = "password";
-const PASSWORD_DISPLAY_LABEL = "\u8282\u70b9\u52a0\u5bc6";
-const ACCESS_KEY_DISPLAY_LABEL = "\u6388\u6743\u5bc6\u94a5";
+const PASSWORD_DISPLAY_LABEL = "\u89e3\u5f00\u52a0\u5bc6";
+const ACCESS_KEY_DISPLAY_LABEL = "\u5bc6\u94a5";
+const ENCRYPT_PASSWORD_LABEL = "\u52a0\u5bc6\u5bc6\u7801";
 const PRODUCT_CODE_LABEL = "\u4ea7\u54c1\u7f16\u7801";
 const RESTORE_BUTTON_LABEL = "\u5f00\u653e\u8282\u70b9";
 const ENCRYPT_SINGLE_LABEL = `${BRAND_NAME} \u52a0\u5bc6\u6b64\u8282\u70b9`;
@@ -628,8 +629,8 @@ function promptEncryptionOptions() {
         <div style="font-size:13px;color:#71d9cb;letter-spacing:0.12em;text-transform:uppercase;">${BRAND_NAME}</div>
         <h3 style="margin:8px 0 0;font-size:24px;">加密设置</h3>
         <div style="margin:10px 0 0;color:#9fb0d0;line-height:1.8;font-size:14px;">
-          1、本插件分为本地节点加密，隐藏节点后无需密钥也可以运行。<br />
-          2、密钥系统需要注册登陆提供密钥管理，开启后用户需要获取密钥才能运行工作流。
+          1、普通加密：只是隐藏其他节点，不影响正常运行，无需授权密钥即可运行。<br />
+          2、密钥系统：需要登录后台创建密钥组，开启后用户需获取密钥才能运行工作流。
         </div>
         <div data-auth-row style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,0.04);">
           <div style="display:grid;gap:4px;">
@@ -643,12 +644,12 @@ function promptEncryptionOptions() {
         </div>
       </div>
       <label style="display:grid;gap:8px;">
-        <span style="color:#9fb0d0;font-size:14px;">${PASSWORD_DISPLAY_LABEL}</span>
+        <span style="color:#9fb0d0;font-size:14px;">${ENCRYPT_PASSWORD_LABEL}</span>
         <input name="passphrase" type="password" autocomplete="new-password" style="width:100%;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#0d1320;color:#eef3ff;" />
       </label>
       <label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,0.04);">
         <input name="key_required" type="checkbox" style="inline-size:18px;block-size:18px;" />
-        <span>启用密钥校验</span>
+        <span>启用密钥校验（不启用则为普通加密）</span>
       </label>
       <label data-key-row style="display:grid;gap:8px;">
         <span style="color:#9fb0d0;font-size:14px;">${PRODUCT_CODE_LABEL}</span>
@@ -751,7 +752,7 @@ function promptEncryptionOptions() {
       const keyGroup = keyGroupInput.value?.trim();
 
       if (!passphrase) {
-        window.alert("\u8bf7\u5148\u586b\u5199\u8282\u70b9\u52a0\u5bc6\u5bc6\u7801\u3002");
+        window.alert("\u8bf7\u5148\u586b\u5199\u52a0\u5bc6\u5bc6\u7801\u3002");
         return;
       }
       if (keyRequired && !keyGroup) {
@@ -1315,8 +1316,8 @@ promptEncryptionOptions = function () {
         <div style="font-size:13px;color:#71d9cb;letter-spacing:0.12em;text-transform:uppercase;">${BRAND_NAME}</div>
         <h3 style="margin:8px 0 0;font-size:24px;">\u52a0\u5bc6\u8bbe\u7f6e</h3>
         <div style="margin:10px 0 0;color:#9fb0d0;line-height:1.8;font-size:14px;">
-          1、本插件分为本地节点加密，隐藏节点后无需密钥也可以运行。<br />
-          2、密钥系统需要注册登陆提供密钥管理，开启后用户需要获取密钥才能运行工作流。
+          1、普通加密：只是隐藏其他节点，不影响正常运行，无需授权密钥即可运行。<br />
+          2、密钥系统：需要登录后台创建密钥组，开启后用户需获取密钥才能运行工作流。
         </div>
         <div data-auth-row style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,0.04);">
           <div style="display:grid;gap:4px;">
@@ -1330,12 +1331,12 @@ promptEncryptionOptions = function () {
         </div>
       </div>
       <label style="display:grid;gap:8px;">
-        <span style="color:#9fb0d0;font-size:14px;">${PASSWORD_DISPLAY_LABEL}</span>
+        <span style="color:#9fb0d0;font-size:14px;">${ENCRYPT_PASSWORD_LABEL}</span>
         <input name="passphrase" type="password" autocomplete="new-password" style="width:100%;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:#0d1320;color:#eef3ff;" />
       </label>
       <label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,0.04);">
         <input name="key_required" type="checkbox" style="inline-size:18px;block-size:18px;" />
-        <span>\u542f\u7528\u5bc6\u94a5\u6821\u9a8c</span>
+        <span>\u542f\u7528\u5bc6\u94a5\u6821\u9a8c\uff08\u4e0d\u542f\u7528\u5219\u4e3a\u666e\u901a\u52a0\u5bc6\uff09</span>
       </label>
       <label style="display:grid;gap:8px;">
         <span style="color:#9fb0d0;font-size:14px;">${PRODUCT_CODE_LABEL}</span>
@@ -1427,7 +1428,7 @@ promptEncryptionOptions = function () {
       const keyGroup = keyGroupInput.value?.trim();
 
       if (!passphrase) {
-        window.alert("\u8bf7\u5148\u586b\u5199\u8282\u70b9\u52a0\u5bc6\u5bc6\u7801\u3002");
+        window.alert("\u8bf7\u5148\u586b\u5199\u52a0\u5bc6\u5bc6\u7801\u3002");
         return;
       }
       if (keyRequired && !keyGroup) {

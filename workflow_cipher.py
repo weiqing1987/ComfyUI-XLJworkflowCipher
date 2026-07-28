@@ -379,6 +379,8 @@ class WorkflowCipherSelectionBuilder:
                     label = slot_name
             output_labels.append(label)
 
+        # 加密数据存储在节点 properties 中（确保 ComfyUI 序列化时不丢失）
+        # definitions.encrypted_subgraphs 方案不可靠：app.graph.serialize() 不会保留 definitions 字段
         shell_node = {
             "id": shell_node_id,
             "type": "WorkflowCipherVaultNode",
@@ -494,7 +496,20 @@ def decrypt_selection_to_shell_workflow(workflow, shell_node_id, passphrase):
     shell = copy.deepcopy(workflow)
     shell_node = _find_workflow_node(shell, shell_node_id)
     properties = shell_node.get("properties", {})
+
+    # 主格式：从 properties.workflowcipher_pack 加载
     packed_payload = properties.get("workflowcipher_pack", "")
+
+    # 旧格式 fallback：从 definitions.encrypted_subgraphs 加载
+    if not packed_payload:
+        encrypted_subgraph_id = properties.get("workflowcipher_encrypted_subgraph_id")
+        if encrypted_subgraph_id:
+            definitions = shell.get("definitions") or {}
+            for subgraph in definitions.get("encrypted_subgraphs") or []:
+                if subgraph.get("id") == encrypted_subgraph_id:
+                    packed_payload = subgraph.get("encrypted_payload", "")
+                    break
+
     if not packed_payload:
         raise ValueError("Encrypted WorkflowCipher payload is missing.")
 
@@ -753,6 +768,7 @@ class WorkflowCipherPlanner:
         encrypt_node["widgets_values"] = [self.template_id, "", ""]
         encrypt_node["outputs"] = copy.deepcopy(bridge_node.get("outputs", []))
 
+        # 加密数据存储在节点 properties 中（确保序列化时不丢失）
         properties = copy.deepcopy(encrypt_node.get("properties", {}))
         properties["Node name for S&R"] = "WorkflowCipherDecryptNode"
         properties["workflowcipher_pack"] = packed_payload
@@ -983,12 +999,23 @@ class _WorkflowCipherShellBase:
     def _load_embedded_pack(self, workflow, unique_id):
         node = _find_workflow_node(workflow, unique_id)
         properties = node.get("properties", {})
+
+        # 主格式：从 properties.workflowcipher_pack 加载（可靠，序列化时不丢失）
         packed_payload = properties.get("workflowcipher_pack", "")
-        if not packed_payload:
-            raise ValueError(
-                "Embedded XLJworkflowCipher payload is missing from this workflow."
-            )
-        return packed_payload
+        if packed_payload:
+            return packed_payload
+
+        # 旧格式 fallback：从 definitions.encrypted_subgraphs 加载（已废弃，可能不可靠）
+        encrypted_subgraph_id = properties.get("workflowcipher_encrypted_subgraph_id")
+        if encrypted_subgraph_id:
+            definitions = workflow.get("definitions") or {}
+            for subgraph in definitions.get("encrypted_subgraphs") or []:
+                if subgraph.get("id") == encrypted_subgraph_id:
+                    return subgraph.get("encrypted_payload", "")
+
+        raise ValueError(
+            "Embedded XLJworkflowCipher payload is missing from this workflow."
+        )
 
     def _get_runtime_key(self, workflow, unique_id):
         node = _find_workflow_node(workflow, unique_id)

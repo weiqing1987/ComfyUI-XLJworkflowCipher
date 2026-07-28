@@ -67,9 +67,9 @@ The plugin supports a remote backend for creator login, workflow registration, a
 Default config shipped with the plugin:
 
 ```env
-XLJWORKFLOWCIPHER_API_BASE=https://cf.xinlingjunai.net
-XLJWORKFLOWCIPHER_PROXY_API_BASE=http://120.24.24.153:8218
-XLJWORKFLOWCIPHER_PORTAL_URL=https://cf.xinlingjunai.net/xljworkflowcipher/portal
+XLJWORKFLOWCIPHER_API_BASE=https://easy.fhznai.cn
+XLJWORKFLOWCIPHER_PROXY_API_BASE=http://127.0.0.1:8218
+XLJWORKFLOWCIPHER_PORTAL_URL=https://easy.fhznai.cn/xljworkflowcipher/portal
 ```
 
 You can override these values by editing `service.env`.
@@ -77,6 +77,7 @@ You can override these values by editing `service.env`.
 Creator portal:
 
 - `https://cf.xinlingjunai.net/xljworkflowcipher/portal`
+- `https://easy.fhznai.cn/xljworkflowcipher/portal`
 
 ## Notes
 
