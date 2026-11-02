@@ -2,7 +2,7 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { GroupNodeHandler } from "/extensions/core/groupNode.js";
 
-const BUILD_ID = "2026-07-28-vault-panel-redesign";
+const BUILD_ID = "2026-11-02-vault-compatibility";
 const MODULE_GUARD_KEY = "__xljworkflowcipher_extension_loaded__";
 const VAULT_NODE_TYPE = "WorkflowCipherVaultNode";
 const GROUP_NODE_PREFIX = "workflow/";
@@ -149,12 +149,12 @@ function selectNode(node) {
 }
 
 function trimVaultPorts(node) {
-  const inputCount = Math.max(0, Number(node.properties?.workflowcipher_input_count || node.inputs?.length || 0));
-  const outputCount = Math.max(0, Number(node.properties?.workflowcipher_output_count || node.outputs?.length || 0));
-  if (Array.isArray(node.inputs) && inputCount && node.inputs.length !== inputCount) {
+  const inputCount = node.properties?.workflowcipher_input_count;
+  const outputCount = node.properties?.workflowcipher_output_count;
+  if (Number.isInteger(inputCount) && inputCount >= 0 && Array.isArray(node.inputs)) {
     node.inputs = node.inputs.slice(0, inputCount);
   }
-  if (Array.isArray(node.outputs) && outputCount && node.outputs.length !== outputCount) {
+  if (Number.isInteger(outputCount) && outputCount >= 0 && Array.isArray(node.outputs)) {
     node.outputs = node.outputs.slice(0, outputCount);
   }
 }
@@ -1163,13 +1163,14 @@ function addRestoreMenu(node, options) {
 }
 
 function injectCanvasContextMenu() {
-  if (LGraphCanvas.prototype.__workflowCipherCanvasMenuWrapped) {
+  const canvasType = globalThis.LGraphCanvas || globalThis.LiteGraph?.LGraphCanvas;
+  if (!canvasType?.prototype || canvasType.prototype.__workflowCipherCanvasMenuWrapped) {
     return;
   }
-  LGraphCanvas.prototype.__workflowCipherCanvasMenuWrapped = true;
+  canvasType.prototype.__workflowCipherCanvasMenuWrapped = true;
 
-  const original = LGraphCanvas.prototype.getCanvasMenuOptions;
-  LGraphCanvas.prototype.getCanvasMenuOptions = function () {
+  const original = canvasType.prototype.getCanvasMenuOptions;
+  canvasType.prototype.getCanvasMenuOptions = function () {
     const options = original ? original.apply(this, arguments) : [];
     const selectedNodes = getSelectedNodes(this).filter((node) => !isWorkflowCipherControlNode(node));
     if (selectedNodes.length) {
